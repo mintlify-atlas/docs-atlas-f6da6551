@@ -13,14 +13,12 @@ Shipr uses [Clerk](https://clerk.com) for authentication and session management,
 
 ## Architecture
 
-```
-User signs in via Clerk
-        |
-ClerkProviderWrapper (adapts to dark/light theme)
-        |
-ConvexProviderWithClerk (passes Clerk auth to Convex)
-        |
-useSyncUser hook (syncs Clerk user data to Convex DB)
+```mermaid
+graph TD
+    A[User signs in via Clerk] --> B[ClerkProviderWrapper]
+    B --> C[ConvexProviderWithClerk]
+    C --> D[useSyncUser hook]
+    D --> E[Convex DB]
 ```
 
 ## User Sync Hook

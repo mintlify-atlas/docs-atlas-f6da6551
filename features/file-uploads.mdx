@@ -25,6 +25,49 @@ Convex uses a secure 3-step upload process:
 3. Client saves metadata with storageId
 ```
 
+## Using the Upload Hook
+
+The easiest way to upload files is using the `useFileUpload` hook:
+
+```typescript ~/workspace/source/src/hooks/use-file-upload.ts
+import { useFileUpload } from "@/hooks/use-file-upload";
+
+function FileUploadComponent() {
+  const { upload, isUploading, error, progress } = useFileUpload({
+    maxSize: 10 * 1024 * 1024, // 10 MB
+    onSuccess: (storageId) => {
+      console.log("File uploaded:", storageId);
+    },
+    onError: (error) => {
+      console.error("Upload failed:", error);
+    },
+  });
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await upload(file);
+    }
+  };
+
+  return (
+    <div>
+      <input type="file" onChange={handleFileChange} disabled={isUploading} />
+      {isUploading && <p>Uploading... ({progress})</p>}
+      {error && <p className="text-red-500">{error}</p>}
+    </div>
+  );
+}
+```
+
+<Info>
+The `useFileUpload` hook handles all three steps automatically: generating the upload URL, uploading the file, and saving metadata to Convex.
+</Info>
+
+## Manual Upload Steps
+
+For more control, you can implement the 3-step flow manually:
+
 ### Step 1: Generate Upload URL
 
 ```typescript
