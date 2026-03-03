@@ -1,0 +1,103 @@
+{
+  "projectType": "saas",
+  "projectName": "Shipr",
+  "projectDescription": "A production-ready Next.js SaaS boilerplate to ship your product fast with built-in auth, database, AI, and billing.",
+  "theme": "mint",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#2563EB",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/database",
+              "features/ai-chat",
+              "features/file-uploads",
+              "features/email",
+              "features/onboarding",
+              "features/billing"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/analytics",
+              "integrations/seo",
+              "integrations/error-tracking"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/overview",
+              "deployment/environment-variables"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "guides/architecture",
+              "guides/project-structure",
+              "guides/routing",
+              "guides/providers"
+            ]
+          },
+          {
+            "group": "Customization",
+            "pages": [
+              "guides/styling",
+              "guides/components",
+              "guides/rate-limiting",
+              "guides/api-routes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Next.js 16 with App Router",
+    "Clerk Authentication with billing plans",
+    "Convex realtime database",
+    "AI chat with Vercel AI SDK",
+    "File uploads with rate limiting",
+    "Email system with Resend",
+    "PostHog analytics",
+    "Sentry error tracking",
+    "Multi-step onboarding flow",
+    "shadcn/ui components",
+    "Dark mode support",
+    "Blog system",
+    "SEO optimized with metadata and structured data"
+  ],
+  "publicApiSurface": [
+    "POST /api/chat - AI chat endpoint with streaming responses",
+    "POST /api/email - Send transactional emails",
+    "GET /api/health - Health check endpoint",
+    "useSyncUser() - Sync Clerk user to Convex",
+    "useUserPlan() - Get current billing plan",
+    "useOnboarding() - Check onboarding status",
+    "rateLimit() - In-memory rate limiter utility",
+    "sendEmail() - Resend email helper",
+    "Convex mutations: createOrUpdateUser, uploadFile, createChatThread",
+    "Convex queries: getUser, getFiles, getChatThreads"
+  ]
+}
