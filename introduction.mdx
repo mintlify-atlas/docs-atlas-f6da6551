@@ -1,0 +1,142 @@
+---
+title: "Introduction"
+description: "Shipr is a production-ready Next.js SaaS boilerplate that helps you ship faster with authentication, database, payments, and more built-in."
+---
+
+# Welcome to Shipr
+
+Shipr is a production-ready tool for shipping SaaS fast. Built on Next.js 16 with modern best practices, Shipr gives you everything you need to launch your SaaS product without spending weeks on boilerplate.
+
+## What's Inside
+
+Shipr comes fully equipped with:
+
+- **Next.js 16** with App Router and React 19
+- **Clerk** for authentication and billing
+- **Convex** for realtime database and backend
+- **Tailwind CSS 4** with shadcn/ui and Base UI components
+- **Vercel AI SDK** for AI-powered features
+- **PostHog** analytics (reverse-proxied)
+- **Sentry** error tracking
+- **Resend** for transactional emails
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running in minutes with our step-by-step guide
+  </Card>
+  <Card title="Installation" icon="code" href="/installation">
+    Detailed setup instructions for all required services
+  </Card>
+  <Card title="Architecture" icon="building" href="/guides/architecture">
+    Learn how Shipr is structured and organized
+  </Card>
+  <Card title="Deploy" icon="cloud" href="/deployment/overview">
+    Deploy your SaaS to production on Vercel
+  </Card>
+</CardGroup>
+
+## Tech Stack
+
+| Layer          | Technology                           |
+| -------------- | ------------------------------------ |
+| Framework      | Next.js 16 (App Router)              |
+| Auth           | Clerk                                |
+| Database       | Convex                               |
+| Styling        | Tailwind CSS 4 + shadcn/ui + Base UI |
+| AI             | Vercel AI SDK                        |
+| Analytics      | PostHog (reverse-proxied)            |
+| Error Tracking | Sentry                               |
+| Email          | Resend                               |
+| Fonts          | Geist Sans / Mono / Pixel Square     |
+| Deployment     | Vercel                               |
+
+## Key Features
+
+### Authentication & User Management
+
+Pre-configured Clerk integration with automatic user sync to Convex. Includes:
+
+- Sign-in and sign-up flows with customizable themes
+- Session management
+- User profile management
+- Billing plan detection (Free/Pro)
+- Multi-step onboarding flow
+
+### Database & Backend
+
+Convex provides a type-safe, realtime backend with:
+
+- Automatic schema validation
+- Real-time queries and mutations
+- Serverless functions
+- Built-in file storage
+- JWT authentication with Clerk
+
+### Pre-built Features
+
+<CardGroup cols={2}>
+  <Card title="AI Chat" icon="message">
+    Production-ready chat powered by Vercel AI SDK with tool calling, rate limiting, and conversation history
+  </Card>
+  <Card title="File Upload" icon="upload">
+    Secure file upload with Convex storage, MIME type validation, and per-user quotas
+  </Card>
+  <Card title="Transactional Email" icon="envelope">
+    Email templates and sending via Resend with welcome and plan-changed notifications
+  </Card>
+  <Card title="Blog System" icon="newspaper">
+    Simple blog with posts defined in code, auto-generated sitemap and JSON-LD
+  </Card>
+</CardGroup>
+
+### Developer Experience
+
+<Steps>
+  <Step title="Type-safe APIs">
+    End-to-end type safety from database schema to frontend components
+  </Step>
+  <Step title="Hot reload">
+    Instant feedback with Next.js Fast Refresh and Convex dev mode
+  </Step>
+  <Step title="Production-ready">
+    Error tracking, analytics, and monitoring built-in from day one
+  </Step>
+</Steps>
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── (auth)/          # Sign-in & sign-up pages (Clerk)
+│   ├── (dashboard)/     # Protected dashboard routes
+│   ├── (legal)/         # Privacy, terms, cookies
+│   ├── (marketing)/     # Landing, features, pricing, blog
+│   └── api/             # API routes (chat, email, health)
+├── components/
+│   ├── ui/              # shadcn/ui primitives
+│   ├── billing/         # Plan gating and upgrade flows
+│   └── dashboard/       # Dashboard layout components
+├── hooks/
+│   ├── use-sync-user.ts     # Clerk to Convex sync
+│   ├── use-user-plan.ts     # Billing plan detection
+│   └── use-onboarding.ts    # Onboarding flow logic
+├── lib/
+│   ├── ai/              # AI chat config and tools
+│   ├── emails/          # Email templates and sender
+│   ├── files/           # File upload configuration
+│   └── constants.ts     # SEO and app constants
+convex/
+├── schema.ts            # Database schema
+├── users.ts             # User queries & mutations
+├── files.ts             # File upload mutations
+└── auth.config.ts       # Clerk JWT configuration
+```
+
+## Getting Started
+
+Ready to build your SaaS? Head to the [Quick Start](/quickstart) guide to get Shipr running locally in minutes.
+
+<Note>
+  Shipr requires Node.js 18+ and pnpm. Make sure you have these installed before proceeding.
+</Note>

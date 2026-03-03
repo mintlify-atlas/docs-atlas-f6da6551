@@ -1,0 +1,199 @@
+---
+title: "Database"
+description: "Convex real-time database with TypeScript schema and authentication"
+---
+
+Shipr uses [Convex](https://convex.dev) as its real-time database and backend platform.
+
+## Why Convex?
+
+- **Real-time subscriptions** - UI updates automatically when data changes
+- **Type-safe queries** - Full TypeScript support with generated types
+- **Built-in authentication** - Integrates with Clerk JWT tokens
+- **File storage** - Upload and serve files with signed URLs
+- **Server functions** - Queries, mutations, and actions in TypeScript
+
+## Schema
+
+The database schema is defined in `convex/schema.ts`:
+
+```typescript ~/workspace/source/convex/schema.ts
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  users: defineTable({
+    clerkId: v.string(),
+    email: v.string(),
+    name: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    plan: v.optional(v.string()),
+    onboardingCompleted: v.optional(v.boolean()),
+    onboardingStep: v.optional(v.string()),
+  }).index("by_clerk_id", ["clerkId"]),
+
+  files: defineTable({
+    storageId: v.id("_storage"),
+    userId: v.id("users"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+  })
+    .index("by_user_id", ["userId"])
+    .index("by_storage_id", ["storageId"]),
+
+  chatThreads: defineTable({
+    userId: v.id("users"),
+    title: v.string(),
+    lastMessageAt: v.number(),
+  })
+    .index("by_user_id", ["userId"])
+    .index("by_user_id_last_message", ["userId", "lastMessageAt"]),
+
+  chatMessages: defineTable({
+    userId: v.id("users"),
+    threadId: v.id("chatThreads"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+  })
+    .index("by_user_id", ["userId"])
+    .index("by_thread_id", ["threadId"]),
+});
+```
+
+## Tables
+
+### Users
+
+Stores user profiles synced from Clerk.
+
+| Field                 | Type       | Description                      |
+| --------------------- | ---------- | -------------------------------- |
+| `clerkId`             | `string`   | Clerk user ID (indexed)          |
+| `email`               | `string`   | Primary email                    |
+| `name`                | `string?`  | Full name                        |
+| `imageUrl`            | `string?`  | Profile image URL                |
+| `plan`                | `string?`  | `"free"` or `"pro"`             |
+| `onboardingCompleted` | `boolean?` | Onboarding completion status     |
+| `onboardingStep`      | `string?`  | Current onboarding step          |
+
+### Files
+
+Stores file upload metadata and references to Convex storage.
+
+| Field       | Type                | Description                   |
+| ----------- | ------------------- | ----------------------------- |
+| `storageId` | `Id<"_storage">`    | Reference to stored file      |
+| `userId`    | `Id<"users">`       | Owner of the file             |
+| `fileName`  | `string`            | Sanitized original filename   |
+| `mimeType`  | `string`            | MIME type (e.g., "image/png") |
+| `size`      | `number`            | File size in bytes            |
+
+### Chat Threads
+
+Stores AI chat conversation threads.
+
+| Field           | Type           | Description                 |
+| --------------- | -------------- | --------------------------- |
+| `userId`        | `Id<"users">` | Thread owner                |
+| `title`         | `string`       | Auto-generated thread title |
+| `lastMessageAt` | `number`       | Timestamp of last message   |
+
+### Chat Messages
+
+Stores individual messages within chat threads.
+
+| Field      | Type                              | Description                     |
+| ---------- | --------------------------------- | ------------------------------- |
+| `userId`   | `Id<"users">`                    | Message owner                   |
+| `threadId` | `Id<"chatThreads">`              | Parent thread                   |
+| `role`     | `"user"` \| `"assistant"`       | Message sender                  |
+| `content`  | `string`                          | Message text                    |
+
+## Environment Variables
+
+```bash .env.example
+# Convex Database
+NEXT_PUBLIC_CONVEX_URL=https://...convex.cloud
+```
+
+| Variable                 | Description               |
+| ------------------------ | ------------------------- |
+| `NEXT_PUBLIC_CONVEX_URL` | Convex deployment URL     |
+
+## Queries vs Mutations
+
+### Queries
+
+Read data from the database. Automatically re-run when data changes.
+
+```typescript
+import { useQuery } from "convex/react";
+import { api } from "@convex/_generated/api";
+
+function MyComponent() {
+  const user = useQuery(api.users.getCurrentUser);
+  
+  if (user === undefined) return <Loading />;
+  if (user === null) return <NotFound />;
+  
+  return <div>{user.name}</div>;
+}
+```
+
+### Mutations
+
+Write data to the database.
+
+```typescript
+import { useMutation } from "convex/react";
+import { api } from "@convex/_generated/api";
+
+function MyComponent() {
+  const updateStep = useMutation(api.users.updateOnboardingStep);
+  
+  const handleNext = async () => {
+    await updateStep({ step: "profile" });
+  };
+  
+  return <button onClick={handleNext}>Next</button>;
+}
+```
+
+## Authentication
+
+All Convex functions automatically receive Clerk authentication context:
+
+```typescript ~/workspace/source/convex/users.ts
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return null;
+    }
+
+    return await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+  },
+});
+```
+
+<Warning>
+Always check `ctx.auth.getUserIdentity()` in mutations to enforce authentication and ownership.
+</Warning>
+
+## Automatic Timestamps
+
+Convex automatically adds `_creationTime` to every document:
+
+```typescript
+const file = await ctx.db.get(fileId);
+console.log(file._creationTime); // Unix timestamp in milliseconds
+```
+
+<Info>
+No need to manually track `createdAt` fields - use `_creationTime` instead.
+</Info>

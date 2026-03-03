@@ -1,0 +1,401 @@
+---
+title: Rate Limiting
+description: API rate limiting implementation using in-memory sliding window algorithm
+---
+
+## Overview
+
+Shipr includes a built-in rate limiting solution (`src/lib/rate-limit.ts`) that implements a sliding window algorithm with in-memory storage. It's ideal for single-instance deployments and Vercel serverless functions.
+
+<Note>
+  For multi-instance or high-traffic production deployments, consider using Redis-based solutions like [Upstash Rate Limit](https://upstash.com/docs/redis/features/ratelimiting).
+</Note>
+
+## Implementation
+
+The rate limiter is located at `src/lib/rate-limit.ts`:
+
+```typescript
+interface RateLimitOptions {
+  /** Time window in milliseconds (e.g. 60_000 for 1 minute). */
+  interval: number;
+  /** Max number of requests allowed per interval per key. */
+  limit: number;
+}
+
+interface RateLimitResult {
+  /** Whether the request is allowed. */
+  success: boolean;
+  /** Number of remaining requests in the current window. */
+  remaining: number;
+  /** Unix timestamp (ms) when the current window resets. */
+  reset: number;
+}
+
+interface TokenBucket {
+  timestamps: number[];
+}
+
+const MAX_CACHE_SIZE = 10_000;
+
+export function rateLimit({ interval, limit }: RateLimitOptions): {
+  check: (key: string) => RateLimitResult;
+} {
+  const buckets = new Map<string, TokenBucket>();
+
+  function cleanup(): void {
+    if (buckets.size <= MAX_CACHE_SIZE) return;
+    const now = Date.now();
+    for (const [key, bucket] of buckets) {
+      bucket.timestamps = bucket.timestamps.filter((t) => now - t < interval);
+      if (bucket.timestamps.length === 0) {
+        buckets.delete(key);
+      }
+    }
+  }
+
+  function check(key: string): RateLimitResult {
+    const now = Date.now();
+    const windowStart = now - interval;
+
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { timestamps: [] };
+      buckets.set(key, bucket);
+    }
+
+    // Remove timestamps outside the current window
+    bucket.timestamps = bucket.timestamps.filter((t) => t > windowStart);
+
+    if (bucket.timestamps.length >= limit) {
+      const oldestInWindow = bucket.timestamps[0] ?? now;
+      const reset = oldestInWindow + interval;
+      return {
+        success: false,
+        remaining: 0,
+        reset,
+      };
+    }
+
+    bucket.timestamps.push(now);
+
+    // Periodic cleanup to prevent memory leaks
+    cleanup();
+
+    return {
+      success: true,
+      remaining: limit - bucket.timestamps.length,
+      reset: now + interval,
+    };
+  }
+
+  return { check };
+}
+```
+
+## How It Works
+
+### Sliding Window Algorithm
+
+1. **Timestamp tracking**: Each request timestamp is stored in a bucket identified by a unique key (e.g., user ID, IP address)
+2. **Window filtering**: On each check, timestamps older than the current window are removed
+3. **Limit enforcement**: If the bucket has too many timestamps, the request is rejected
+4. **Automatic cleanup**: Periodic cleanup prevents memory leaks by removing empty buckets
+
+### Key Features
+
+- **Per-key limits**: Different limits for different users/IPs
+- **Accurate windowing**: True sliding window (not fixed buckets)
+- **Memory-efficient**: Automatic cleanup when cache exceeds 10,000 entries
+- **Reset timestamps**: Clients know exactly when they can retry
+
+## Basic Usage
+
+Create a rate limiter in your API route:
+
+```typescript
+import { rateLimit } from "@/lib/rate-limit";
+
+// 10 requests per minute
+const limiter = rateLimit({ 
+  interval: 60_000, // 1 minute in milliseconds
+  limit: 10 
+});
+
+export async function GET(req: Request) {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success, remaining, reset } = limiter.check(ip);
+
+  if (!success) {
+    return Response.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Remaining": String(remaining),
+          "X-RateLimit-Reset": String(reset),
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  return Response.json({ ok: true });
+}
+```
+
+## Real-World Examples
+
+### Health Check Endpoint
+
+`src/app/api/health/route.ts` - Simple rate limiting by IP:
+
+```typescript
+import { NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 30 });
+
+export function GET(req: Request): NextResponse {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success, remaining, reset } = limiter.check(ip);
+
+  const headers = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+  };
+
+  if (!success) {
+    return NextResponse.json(
+      { status: "error", message: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  return NextResponse.json(
+    {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    },
+    { status: 200, headers },
+  );
+}
+```
+
+### Email API with User Authentication
+
+`src/app/api/email/route.ts` - Rate limiting by IP for anonymous requests:
+
+```typescript
+import { NextResponse } from "next/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 10 });
+
+export async function POST(req: Request): Promise<NextResponse> {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success: allowed, remaining, reset } = limiter.check(ip);
+
+  const rateLimitHeaders = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+  };
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...rateLimitHeaders,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: rateLimitHeaders },
+    );
+  }
+
+  // Process email sending...
+}
+```
+
+### Chat API with Composite Keys
+
+`src/app/api/chat/route.ts` - Rate limiting by user ID + IP combination:
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({
+  interval: 60_000, // 1 minute
+  limit: 10,
+});
+
+export async function POST(req: Request): Promise<Response> {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Composite key: user + IP for more granular control
+  const forwardedFor = req.headers.get("x-forwarded-for") ?? "unknown";
+  const ip = forwardedFor.split(",")[0]?.trim() || "unknown";
+  const { success, remaining, reset } = limiter.check(`${userId}:${ip}`);
+
+  const rateLimitHeaders = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+  };
+
+  if (!success) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...rateLimitHeaders,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  // Process chat request...
+}
+```
+
+## Rate Limit Headers
+
+Follow standard HTTP rate limit headers:
+
+```typescript
+const headers = {
+  // How many requests remain in the current window
+  "X-RateLimit-Remaining": String(remaining),
+  
+  // When the current window resets (Unix timestamp in ms)
+  "X-RateLimit-Reset": String(reset),
+  
+  // How many seconds to wait before retrying (only on 429)
+  "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+};
+```
+
+## Common Patterns
+
+### Different Limits for Different Endpoints
+
+```typescript
+// Strict limit for expensive operations
+const chatLimiter = rateLimit({ interval: 60_000, limit: 5 });
+
+// Relaxed limit for reads
+const healthLimiter = rateLimit({ interval: 60_000, limit: 30 });
+
+// Very permissive for static content
+const staticLimiter = rateLimit({ interval: 60_000, limit: 100 });
+```
+
+### IP Extraction from Headers
+
+```typescript
+function getClientIp(req: Request): string {
+  const forwardedFor = req.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    // Get first IP from comma-separated list
+    return forwardedFor.split(",")[0]?.trim() || "unknown";
+  }
+  return req.headers.get("x-real-ip") ?? "unknown";
+}
+```
+
+### User-Based Rate Limiting
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+
+export async function POST(req: Request) {
+  const { userId } = await auth();
+  const key = userId ?? getClientIp(req);
+  
+  const { success, remaining, reset } = limiter.check(key);
+  // ...
+}
+```
+
+## Configuration Examples
+
+```typescript
+// Conservative: 5 requests per minute
+rateLimit({ interval: 60_000, limit: 5 })
+
+// Moderate: 10 requests per minute
+rateLimit({ interval: 60_000, limit: 10 })
+
+// Relaxed: 30 requests per minute
+rateLimit({ interval: 60_000, limit: 30 })
+
+// Per-second limit: 10 requests per 10 seconds
+rateLimit({ interval: 10_000, limit: 10 })
+
+// Hourly limit: 100 requests per hour
+rateLimit({ interval: 3_600_000, limit: 100 })
+```
+
+## Limitations
+
+### Single-Instance Only
+
+The in-memory implementation doesn't share state across multiple server instances. Each instance maintains its own rate limit counters.
+
+**Solution**: Use Redis-based rate limiting for distributed systems:
+
+```typescript
+// For production with multiple instances, use Upstash:
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const limiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, "1 m"),
+});
+```
+
+### Memory Considerations
+
+The limiter stores up to 10,000 unique keys before triggering cleanup. For applications with millions of users, consider:
+
+1. Using shorter time windows
+2. Implementing more aggressive cleanup
+3. Switching to Redis-based solutions
+
+## Best Practices
+
+1. **Always include rate limit headers** - Even on successful requests
+2. **Use meaningful keys** - Combine user ID + IP for better tracking
+3. **Set appropriate limits** - Balance UX and resource protection
+4. **Return proper error codes** - Use 429 for rate limit errors
+5. **Include Retry-After header** - Help clients implement backoff
+6. **Monitor your limits** - Track 429 responses in analytics
+7. **Test your limits** - Verify behavior under load

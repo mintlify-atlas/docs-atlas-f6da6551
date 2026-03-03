@@ -1,0 +1,250 @@
+---
+title: Styling
+description: Tailwind CSS configuration, theme customization, and dark mode implementation in Shipr
+---
+
+## Overview
+
+Shipr uses Tailwind CSS v4 with a modern CSS variable-based theming system, supporting seamless dark mode switching and extensive customization options.
+
+## Global Styles
+
+The main stylesheet is located at `src/app/globals.css` and imports multiple CSS modules:
+
+```css
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@clerk/themes/shadcn.css";
+
+@custom-variant dark (&:is(.dark *));
+```
+
+### CSS Variables
+
+Shipr uses CSS custom properties for theme values, defined in OKLCH color space for better perceptual uniformity:
+
+```css
+:root {
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0 0 0);
+  --primary: oklch(0 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.96 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.45 0 0);
+  --destructive: oklch(0.58 0.22 27);
+  --border: oklch(0.92 0 0);
+  --radius: 0.625rem;
+  /* ... more variables */
+}
+```
+
+### Dark Mode Variables
+
+Dark mode overrides are defined in the `.dark` class:
+
+```css
+.dark {
+  --background: oklch(0 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.05 0 0);
+  --card-foreground: oklch(1 0 0);
+  --muted: oklch(0.1 0 0);
+  --muted-foreground: oklch(0.65 0 0);
+  /* ... more variables */
+}
+```
+
+## Theme Configuration
+
+The `@theme` directive maps CSS variables to Tailwind utilities:
+
+```css
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* ... more mappings */
+}
+```
+
+## Dark Mode Implementation
+
+### Theme Provider
+
+Shipr uses `next-themes` for dark mode management. The provider is located at `src/components/theme-provider.tsx`:
+
+```tsx
+"use client";
+
+import * as React from "react";
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+
+export function ThemeProvider({
+  children,
+  ...props
+}: React.ComponentProps<typeof NextThemesProvider>) {
+  return <NextThemesProvider {...props}>{children}</NextThemesProvider>;
+}
+```
+
+### Theme Toggle Component
+
+The theme toggle component (`src/components/theme-toggle.tsx`) provides a dropdown menu with Light, Dark, and System options:
+
+```tsx
+"use client";
+
+import posthog from "posthog-js";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Moon02Icon, Sun01Icon } from "@hugeicons/core-free-icons";
+import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+export function ThemeToggle() {
+  const { setTheme, resolvedTheme } = useTheme();
+
+  const handleThemeChange = (newTheme: string) => {
+    posthog.capture("theme_toggled", {
+      previous_theme: resolvedTheme,
+      new_theme: newTheme,
+    });
+    setTheme(newTheme);
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon-xs" />}>
+        <HugeiconsIcon
+          icon={Sun01Icon}
+          strokeWidth={2}
+          className="h-3.5! w-3.5! rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0"
+        />
+        <HugeiconsIcon
+          icon={Moon02Icon}
+          strokeWidth={2}
+          className="absolute h-3.5! w-3.5! rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100"
+        />
+        <span className="sr-only">Toggle theme</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => handleThemeChange("light")}>
+          Light
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => handleThemeChange("dark")}>
+          Dark
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => handleThemeChange("system")}>
+          System
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+```
+
+The component includes:
+- Smooth icon transitions between light and dark modes
+- Analytics tracking with PostHog
+- System preference detection
+- Accessible screen reader labels
+
+## Customizing Colors
+
+To customize your theme colors:
+
+1. **Edit CSS variables** in `src/app/globals.css`:
+
+```css
+:root {
+  --primary: oklch(0.45 0.25 264); /* Your brand color */
+  --primary-foreground: oklch(1 0 0);
+}
+
+.dark {
+  --primary: oklch(0.65 0.25 264); /* Lighter for dark mode */
+}
+```
+
+2. **Use OKLCH color space** for better color consistency across light and dark modes
+
+3. **Update radius** for different border radius styles:
+
+```css
+:root {
+  --radius: 0.5rem; /* More rounded */
+}
+```
+
+## Base Layer Utilities
+
+Global styles are applied via the `@layer base` directive:
+
+```css
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply scroll-smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+```
+
+## Using Theme Colors
+
+Access theme colors in your components using Tailwind classes:
+
+```tsx
+<div className="bg-primary text-primary-foreground">
+  Primary button
+</div>
+
+<div className="bg-muted text-muted-foreground">
+  Muted content
+</div>
+
+<div className="border-border bg-card text-card-foreground">
+  Card content
+</div>
+```
+
+## Typography
+
+Custom font families are configured in the theme:
+
+```css
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-pixel-square: var(--font-geist-pixel-square);
+}
+```
+
+Use them in your components:
+
+```tsx
+<p className="font-sans">Default text</p>
+<code className="font-mono">Code snippet</code>
+```
+
+## Best Practices
+
+1. **Use semantic color names** - Prefer `bg-primary` over hardcoded colors
+2. **Test both themes** - Always verify your UI works in light and dark modes
+3. **Leverage CSS variables** - Add custom properties when needed
+4. **Maintain contrast** - Ensure sufficient contrast ratios for accessibility
+5. **Use OKLCH** - Better perceptual uniformity than RGB or HSL

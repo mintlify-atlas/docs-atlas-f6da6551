@@ -1,0 +1,574 @@
+---
+title: Routing
+description: Understanding Next.js App Router patterns, route groups, and navigation in Shipr
+---
+
+Shipr uses Next.js 15 App Router with route groups to organize pages by function and apply different layouts based on the user's context.
+
+## Route Groups Overview
+
+Route groups use folder names wrapped in parentheses `(name)` to organize routes without affecting the URL structure. This allows you to:
+
+- Apply different layouts to different sections
+- Keep related pages organized
+- Share loading states and error boundaries
+
+**Key concept:** `(dashboard)/settings/page.tsx` becomes `/settings`, not `/dashboard/settings`
+
+## Route Structure
+
+```
+src/app/
+├── (auth)/              → /sign-in, /sign-up
+├── (dashboard)/         → /dashboard, /onboarding
+├── (legal)/             → /privacy, /terms, /cookies
+├── (marketing)/         → /, /features, /pricing, /blog
+├── api/                 → /api/health, /api/email, /api/chat
+└── waitlist/            → /waitlist
+```
+
+## Route Group Details
+
+### (marketing) — Public Pages
+
+**Location:** `src/app/(marketing)/`  
+**Layout:** `src/app/(marketing)/layout.tsx`  
+**Features:** Header navigation, footer, no auth required
+
+**Routes:**
+
+| Path              | File                                   | Purpose          |
+| ----------------- | -------------------------------------- | ---------------- |
+| `/`               | `(marketing)/page.tsx`                 | Landing page     |
+| `/features`       | `(marketing)/features/page.tsx`        | Features page    |
+| `/pricing`        | `(marketing)/pricing/page.tsx`         | Pricing plans    |
+| `/about`          | `(marketing)/about/page.tsx`           | About page       |
+| `/docs`           | `(marketing)/docs/page.tsx`            | Docs redirect    |
+| `/blog`           | `(marketing)/blog/page.tsx`            | Blog index       |
+| `/blog/[slug]`    | `(marketing)/blog/[slug]/page.tsx`     | Blog post detail |
+
+**Layout structure:**
+
+```tsx
+// src/app/(marketing)/layout.tsx
+import { HeroHeader } from "@/components/header";
+import { Footer } from "@/components/footer-1";
+
+export default function MarketingLayout({ children }) {
+  return (
+    <>
+      <HeroHeader />
+      <main>{children}</main>
+      <Footer />
+    </>
+  );
+}
+```
+
+### (auth) — Authentication Pages
+
+**Location:** `src/app/(auth)/`  
+**Layout:** `src/app/(auth)/layout.tsx`  
+**Features:** Centered layout, Clerk components
+
+**Routes:**
+
+| Path        | File                                        | Purpose           |
+| ----------- | ------------------------------------------- | ----------------- |
+| `/sign-in`  | `(auth)/sign-in/[[...sign-in]]/page.tsx`    | Clerk sign-in UI  |
+| `/sign-up`  | `(auth)/sign-up/[[...sign-up]]/page.tsx`    | Clerk sign-up UI  |
+
+**Catch-all routes:** The `[[...sign-in]]` syntax creates optional catch-all routes, allowing Clerk to handle sub-paths like `/sign-in/verify-email`.
+
+**Layout structure:**
+
+```tsx
+// src/app/(auth)/layout.tsx
+export default function AuthLayout({ children }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="w-full max-w-md">
+        {children}
+      </div>
+    </div>
+  );
+}
+```
+
+**Sign-in page:**
+
+```tsx
+// src/app/(auth)/sign-in/[[...sign-in]]/page.tsx
+import { SignIn } from "@clerk/nextjs";
+
+export default function SignInPage() {
+  return <SignIn />;
+}
+```
+
+### (dashboard) — Protected Pages
+
+**Location:** `src/app/(dashboard)/`  
+**Layout:** `src/app/(dashboard)/layout.tsx`  
+**Features:** Sidebar navigation, authentication required, user sync
+
+**Routes:**
+
+| Path                | File                                    | Purpose              |
+| ------------------- | --------------------------------------- | -------------------- |
+| `/dashboard`        | `(dashboard)/dashboard/page.tsx`        | Main dashboard       |
+| `/dashboard/chat`   | `(dashboard)/dashboard/chat/page.tsx`   | AI chat interface    |
+| `/dashboard/files`  | `(dashboard)/dashboard/files/page.tsx`  | File management      |
+| `/onboarding`       | `(dashboard)/onboarding/page.tsx`       | New user onboarding  |
+
+**Layout structure:**
+
+```tsx
+// src/app/(dashboard)/layout.tsx
+import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { useSyncUser } from "@/hooks/use-sync-user";
+
+export default function DashboardLayout({ children }) {
+  return (
+    <DashboardShell>
+      {children}
+    </DashboardShell>
+  );
+}
+```
+
+**DashboardShell component:**
+
+```tsx
+// src/components/dashboard/dashboard-shell.tsx
+import { useSyncUser } from "@/hooks/use-sync-user";
+import { useOnboarding } from "@/hooks/use-onboarding";
+import { Sidebar } from "@/components/dashboard/sidebar";
+import { TopNav } from "@/components/dashboard/top-nav";
+
+export function DashboardShell({ children }) {
+  const { isLoaded, user } = useSyncUser();    // Sync Clerk → Convex
+  useOnboarding();                              // Redirect if onboarding incomplete
+  
+  if (!isLoaded) return <LoadingSpinner />;
+  
+  return (
+    <div className="flex">
+      <Sidebar />
+      <div className="flex-1">
+        <TopNav user={user} />
+        <main>{children}</main>
+      </div>
+    </div>
+  );
+}
+```
+
+### (legal) — Legal Pages
+
+**Location:** `src/app/(legal)/`  
+**Layout:** `src/app/(legal)/layout.tsx`  
+**Features:** Minimal layout, static content
+
+**Routes:**
+
+| Path        | File                             | Purpose        |
+| ----------- | -------------------------------- | -------------- |
+| `/privacy`  | `(legal)/privacy/page.tsx`       | Privacy policy |
+| `/terms`    | `(legal)/terms/page.tsx`         | Terms of service |
+| `/cookies`  | `(legal)/cookies/page.tsx`       | Cookie policy  |
+
+**Layout structure:**
+
+```tsx
+// src/app/(legal)/layout.tsx
+export default function LegalLayout({ children }) {
+  return (
+    <div className="mx-auto max-w-4xl px-6 py-12">
+      {children}
+    </div>
+  );
+}
+```
+
+### waitlist — Standalone Page
+
+**Location:** `src/app/waitlist/page.tsx`  
+**Path:** `/waitlist`  
+**Layout:** Uses root layout (no route group)
+
+Pages outside route groups use the root layout directly.
+
+## Dynamic Routes
+
+### Blog Post Detail
+
+**Path:** `/blog/[slug]`  
+**File:** `src/app/(marketing)/blog/[slug]/page.tsx`
+
+```tsx
+import { BLOG_POSTS, getBlogPostBySlug } from "@/lib/blog";
+import { notFound } from "next/navigation";
+
+interface Props {
+  params: { slug: string };
+}
+
+export async function generateStaticParams() {
+  return BLOG_POSTS.map((post) => ({
+    slug: post.slug,
+  }));
+}
+
+export default function BlogPostPage({ params }: Props) {
+  const post = getBlogPostBySlug(params.slug);
+  
+  if (!post) {
+    notFound();
+  }
+  
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <div dangerouslySetInnerHTML={{ __html: post.content }} />
+    </article>
+  );
+}
+```
+
+**URL examples:**
+- `/blog/getting-started` → `params.slug = "getting-started"`
+- `/blog/nextjs-tips` → `params.slug = "nextjs-tips"`
+
+## API Routes
+
+**Location:** `src/app/api/`  
+**Convention:** `route.ts` files export HTTP method handlers
+
+### Health Check
+
+**File:** `src/app/api/health/route.ts`  
+**Path:** `GET /api/health`
+
+```ts
+export async function GET(req: Request) {
+  return Response.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+}
+```
+
+### Email API
+
+**File:** `src/app/api/email/route.ts`  
+**Path:** `POST /api/email`  
+**Auth:** Clerk middleware
+
+```ts
+import { auth } from "@clerk/nextjs/server";
+import { sendEmail, welcomeEmail } from "@/lib/emails";
+
+export async function POST(req: Request) {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  
+  const body = await req.json();
+  const { subject, html } = welcomeEmail({ name: body.name });
+  
+  await sendEmail({ to: body.email, subject, html });
+  
+  return Response.json({ success: true });
+}
+```
+
+### Chat API
+
+**File:** `src/app/api/chat/route.ts`  
+**Path:** `POST /api/chat`  
+**Features:** Streaming responses via Vercel AI SDK
+
+```ts
+import { streamText } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { auth } from "@clerk/nextjs/server";
+
+export async function POST(req: Request) {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  
+  const { messages } = await req.json();
+  
+  const result = streamText({
+    model: openai("gpt-4.1-mini"),
+    messages,
+  });
+  
+  return result.toDataStreamResponse();
+}
+```
+
+## Navigation Patterns
+
+### Link Component
+
+Use Next.js `Link` for client-side navigation:
+
+```tsx
+import Link from "next/link";
+import { ROUTES } from "@/lib/constants";
+
+export function Header() {
+  return (
+    <nav>
+      <Link href={ROUTES.marketing.home}>Home</Link>
+      <Link href={ROUTES.marketing.features}>Features</Link>
+      <Link href={ROUTES.marketing.pricing}>Pricing</Link>
+      <Link href={ROUTES.dashboard.home}>Dashboard</Link>
+    </nav>
+  );
+}
+```
+
+### Programmatic Navigation
+
+Use `useRouter` for navigation in event handlers:
+
+```tsx
+import { useRouter } from "next/navigation";
+
+export function LoginButton() {
+  const router = useRouter();
+  
+  const handleLogin = async () => {
+    await performLogin();
+    router.push("/dashboard");
+  };
+  
+  return <button onClick={handleLogin}>Login</button>;
+}
+```
+
+### Redirect
+
+Use `redirect()` in Server Components:
+
+```tsx
+import { redirect } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
+
+export default async function ProtectedPage() {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    redirect("/sign-in");
+  }
+  
+  return <Dashboard />;
+}
+```
+
+## Route Protection
+
+### Clerk Middleware
+
+Protect routes via `middleware.ts`:
+
+```ts
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/features",
+  "/pricing",
+  "/blog(.*)",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/health",
+]);
+
+export default clerkMiddleware(async (auth, req) => {
+  if (!isPublicRoute(req)) {
+    await auth.protect();
+  }
+});
+
+export const config = {
+  matcher: [
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+  ],
+};
+```
+
+**Protected routes:** `/dashboard`, `/onboarding`, `/dashboard/chat`, `/dashboard/files`  
+**Public routes:** `/`, `/features`, `/pricing`, `/blog`, `/sign-in`, `/sign-up`
+
+### Client-side Protection
+
+Use `useAuth()` hook for conditional rendering:
+
+```tsx
+import { useAuth } from "@clerk/nextjs";
+import { redirect } from "next/navigation";
+
+export function ProtectedContent() {
+  const { isLoaded, userId } = useAuth();
+  
+  if (!isLoaded) return <LoadingSpinner />;
+  if (!userId) redirect("/sign-in");
+  
+  return <Dashboard />;
+}
+```
+
+## Onboarding Flow
+
+Shipr includes automatic onboarding redirection for new users:
+
+**Hook:** `src/hooks/use-onboarding.ts`
+
+```tsx
+import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@convex/_generated/api";
+
+export function useOnboarding() {
+  const router = useRouter();
+  const status = useQuery(api.users.getOnboardingStatus);
+  
+  if (status && !status.completed) {
+    router.push("/onboarding");
+  }
+}
+```
+
+**Usage in DashboardShell:**
+
+```tsx
+import { useOnboarding } from "@/hooks/use-onboarding";
+
+export function DashboardShell({ children }) {
+  useOnboarding();  // Auto-redirect to /onboarding if incomplete
+  
+  return (
+    <div>
+      <Sidebar />
+      <main>{children}</main>
+    </div>
+  );
+}
+```
+
+## SEO & Metadata
+
+### Static Metadata
+
+```tsx
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Features | Shipr",
+  description: "Explore powerful features of Shipr SaaS boilerplate",
+};
+
+export default function FeaturesPage() {
+  return <Features />;
+}
+```
+
+### Dynamic Metadata
+
+```tsx
+import type { Metadata } from "next";
+import { getBlogPostBySlug } from "@/lib/blog";
+
+interface Props {
+  params: { slug: string };
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const post = getBlogPostBySlug(params.slug);
+  
+  return {
+    title: post.title,
+    description: post.excerpt,
+    openGraph: {
+      title: post.title,
+      description: post.excerpt,
+      type: "article",
+      publishedTime: post.publishedAt,
+    },
+  };
+}
+```
+
+## Generated Routes
+
+### Sitemap
+
+**File:** `src/app/sitemap.ts`  
+**Path:** `/sitemap.xml`
+
+```ts
+import type { MetadataRoute } from "next";
+import { BLOG_POSTS } from "@/lib/blog";
+
+export default function sitemap(): MetadataRoute.Sitemap {
+  const blogPosts = BLOG_POSTS.map((post) => ({
+    url: `https://yourdomain.com/blog/${post.slug}`,
+    lastModified: new Date(post.publishedAt),
+  }));
+  
+  return [
+    { url: "https://yourdomain.com", lastModified: new Date() },
+    { url: "https://yourdomain.com/features", lastModified: new Date() },
+    { url: "https://yourdomain.com/pricing", lastModified: new Date() },
+    ...blogPosts,
+  ];
+}
+```
+
+### Robots.txt
+
+**File:** `src/app/robots.ts`  
+**Path:** `/robots.txt`
+
+```ts
+import type { MetadataRoute } from "next";
+
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: {
+      userAgent: "*",
+      allow: "/",
+      disallow: ["/dashboard/", "/onboarding/"],
+    },
+    sitemap: "https://yourdomain.com/sitemap.xml",
+  };
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/guides/architecture">
+    Learn about the tech stack and architectural decisions
+  </Card>
+  <Card title="Project Structure" icon="folder-tree" href="/guides/project-structure">
+    Explore the directory structure and file organization
+  </Card>
+  <Card title="Providers" icon="layer-group" href="/guides/providers">
+    Deep dive into the provider stack configuration
+  </Card>
+  <Card title="Authentication" icon="shield" href="/guides/authentication">
+    Set up and customize Clerk authentication
+  </Card>
+</CardGroup>

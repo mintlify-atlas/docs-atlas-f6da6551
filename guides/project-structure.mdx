@@ -1,0 +1,467 @@
+---
+title: Project Structure
+description: Understanding Shipr's directory structure and file organization patterns
+---
+
+Shipr follows Next.js 15 App Router conventions with a clear separation between app routes, components, utilities, and backend logic.
+
+## Overview
+
+```
+shipr/
+├── convex/                  # Convex backend (database, auth, mutations)
+├── public/                  # Static assets (images, fonts, etc.)
+├── src/
+│   ├── app/                # Next.js App Router (routes & layouts)
+│   ├── components/         # React components
+│   ├── hooks/              # Custom React hooks
+│   └── lib/                # Utilities, configs, helpers
+├── .env.example            # Environment variable template
+├── next.config.ts          # Next.js configuration
+├── tailwind.config.ts      # Tailwind CSS configuration
+└── tsconfig.json           # TypeScript configuration
+```
+
+## App Directory Structure
+
+The `src/app/` directory uses Next.js App Router with route groups for organization:
+
+```
+src/app/
+├── (auth)/                 # Authentication pages
+│   ├── sign-in/
+│   │   └── [[...sign-in]]/
+│   │       └── page.tsx    # Clerk sign-in catch-all
+│   └── sign-up/
+│       └── [[...sign-up]]/
+│           └── page.tsx    # Clerk sign-up catch-all
+│
+├── (dashboard)/            # Protected dashboard area
+│   ├── dashboard/
+│   │   ├── page.tsx        # Main dashboard
+│   │   ├── chat/
+│   │   │   └── page.tsx    # AI chat interface
+│   │   └── files/
+│   │       └── page.tsx    # File management
+│   ├── onboarding/
+│   │   └── page.tsx        # Multi-step onboarding
+│   └── layout.tsx          # Dashboard shell layout
+│
+├── (legal)/                # Legal pages
+│   ├── privacy/
+│   │   └── page.tsx        # Privacy policy
+│   ├── terms/
+│   │   └── page.tsx        # Terms of service
+│   ├── cookies/
+│   │   └── page.tsx        # Cookie policy
+│   └── layout.tsx          # Minimal legal layout
+│
+├── (marketing)/            # Public marketing pages
+│   ├── page.tsx            # Landing page (/)
+│   ├── features/
+│   │   └── page.tsx        # Features page
+│   ├── pricing/
+│   │   └── page.tsx        # Pricing page
+│   ├── about/
+│   │   └── page.tsx        # About page
+│   ├── docs/
+│   │   └── page.tsx        # Documentation redirect
+│   ├── blog/
+│   │   ├── page.tsx        # Blog index
+│   │   └── [slug]/
+│   │       └── page.tsx    # Individual blog post
+│   └── layout.tsx          # Marketing layout (header + footer)
+│
+├── api/                    # API routes
+│   ├── health/
+│   │   └── route.ts        # Health check endpoint
+│   ├── email/
+│   │   └── route.ts        # Send transactional emails
+│   └── chat/
+│       └── route.ts        # AI chat streaming endpoint
+│
+├── waitlist/
+│   └── page.tsx            # Waitlist signup page
+│
+├── layout.tsx              # Root layout (providers, fonts, metadata)
+├── not-found.tsx           # Custom 404 page
+├── error.tsx               # App-level error boundary
+├── global-error.tsx        # Root error boundary
+├── robots.ts               # Robots.txt generation
+├── sitemap.ts              # Sitemap.xml generation
+└── globals.css             # Global styles
+```
+
+## Components Directory
+
+Components are organized by feature and type:
+
+```
+src/components/
+├── ui/                     # shadcn/ui primitives
+│   ├── button.tsx
+│   ├── card.tsx
+│   ├── dialog.tsx
+│   ├── tooltip.tsx
+│   ├── sonner.tsx          # Toast notifications
+│   └── svgs/               # SVG icon components
+│
+├── billing/                # Billing & upgrade components
+│   ├── upgrade-button.tsx  # Pro plan CTA
+│   └── plan-badge.tsx      # Plan status badge
+│
+├── dashboard/              # Dashboard-specific components
+│   ├── dashboard-shell.tsx # Dashboard layout wrapper
+│   ├── sidebar.tsx         # Navigation sidebar
+│   └── top-nav.tsx         # Top navigation bar
+│
+├── clerk-provider-wrapper.tsx  # Clerk theme adaptation
+├── theme-provider.tsx      # next-themes provider
+├── theme-toggle.tsx        # Light/dark mode switcher
+├── posthog-provider.tsx    # PostHog analytics provider
+├── posthog-identify.tsx    # PostHog user identification
+├── posthog-pageview.tsx    # PostHog pageview tracking
+├── header.tsx              # Marketing header
+└── footer-1.tsx            # Marketing footer
+```
+
+### UI Components
+
+Shipr uses [shadcn/ui](https://ui.shadcn.com) components with Base UI primitives. All UI components are located in `src/components/ui/` and can be customized via Tailwind CSS.
+
+**Key UI components:**
+
+- **Forms:** `form.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`
+- **Overlays:** `dialog.tsx`, `sheet.tsx`, `popover.tsx`, `tooltip.tsx`
+- **Feedback:** `sonner.tsx` (toasts), `skeleton.tsx`, `progress.tsx`
+- **Navigation:** `tabs.tsx`, `dropdown-menu.tsx`, `breadcrumb.tsx`
+- **Layout:** `card.tsx`, `separator.tsx`, `scroll-area.tsx`
+
+## Hooks Directory
+
+Custom React hooks for common patterns:
+
+```
+src/hooks/
+├── use-sync-user.ts        # Sync Clerk user to Convex
+├── use-user-plan.ts        # Get current billing plan
+├── use-onboarding.ts       # Check onboarding status & redirect
+└── use-mobile.ts           # Responsive breakpoint detection
+```
+
+### Hook Usage Examples
+
+**useSyncUser** — Syncs Clerk user to Convex database:
+
+```tsx
+import { useSyncUser } from "@/hooks/use-sync-user";
+
+export function DashboardShell() {
+  const { user, convexUser, isLoaded } = useSyncUser();
+  
+  if (!isLoaded) return <LoadingSpinner />;
+  
+  return <Dashboard user={convexUser} />;
+}
+```
+
+**useUserPlan** — Check subscription status:
+
+```tsx
+import { useUserPlan } from "@/hooks/use-user-plan";
+
+export function ProFeature() {
+  const { isPro, isLoading } = useUserPlan();
+  
+  if (isLoading) return <Skeleton />;
+  if (!isPro) return <UpgradeButton />;
+  
+  return <ProContent />;
+}
+```
+
+## Lib Directory
+
+Utilities, configurations, and shared logic:
+
+```
+src/lib/
+├── ai/                     # AI chat configuration
+│   ├── config.ts           # Model, prompts, rate limits
+│   └── tools/
+│       └── registry.ts     # AI tool definitions
+│
+├── emails/                 # Email templates & sending
+│   ├── send.ts             # Resend sendEmail helper
+│   ├── welcome.ts          # Welcome email template
+│   ├── plan-changed.ts     # Plan change notification
+│   └── index.ts            # Barrel exports
+│
+├── files/                  # File upload configuration
+│   └── config.ts           # MIME types, size limits
+│
+├── blog.ts                 # Blog post data & helpers
+├── constants.ts            # SEO config, routes, site data
+├── structured-data.tsx     # JSON-LD components for SEO
+├── rate-limit.ts           # In-memory rate limiter
+├── sentry.ts               # Sentry error tracking helpers
+├── convex-client-provider.tsx  # Convex + Clerk provider
+└── utils.ts                # cn() class merge utility
+```
+
+### Key Library Files
+
+**constants.ts** — Central configuration:
+
+```ts
+export const SITE_CONFIG = {
+  name: "Shipr",
+  description: "Production-ready Next.js SaaS boilerplate",
+  url: process.env.NEXT_PUBLIC_SITE_URL,
+  locale: "en_US",
+  language: "en",
+  // ...
+};
+
+export const ROUTES = {
+  marketing: {
+    home: "/",
+    features: "/features",
+    pricing: "/pricing",
+    // ...
+  },
+  dashboard: {
+    home: "/dashboard",
+    chat: "/dashboard/chat",
+    files: "/dashboard/files",
+  },
+  // ...
+};
+```
+
+**utils.ts** — Class name merging:
+
+```ts
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+```
+
+## Convex Directory
+
+Convex backend functions and schema:
+
+```
+convex/
+├── schema.ts               # Database schema definition
+├── users.ts                # User queries & mutations
+├── files.ts                # File upload/delete mutations
+├── chat.ts                 # Chat history queries & mutations
+├── auth.config.ts          # Clerk JWT configuration
+└── _generated/             # Auto-generated Convex types
+```
+
+### Convex File Patterns
+
+Each feature typically has:
+
+1. **Schema definition** in `schema.ts`
+2. **Queries** — Read data (e.g., `getUserByClerkId`)
+3. **Mutations** — Write data (e.g., `createOrUpdateUser`)
+
+**Example: users.ts structure:**
+
+```ts
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+
+// Query: Get current user
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    return await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+  },
+});
+
+// Mutation: Update user
+export const createOrUpdateUser = mutation({
+  args: { clerkId: v.string(), email: v.string(), /* ... */ },
+  handler: async (ctx, args) => {
+    // Mutation logic
+  },
+});
+```
+
+## Public Directory
+
+Static assets served from root:
+
+```
+public/
+├── opengraph-image.png     # Open Graph social image
+├── twitter-image.png       # Twitter card image
+├── favicon.ico             # Browser favicon
+└── logo.svg                # Brand logo
+```
+
+Access files via absolute paths: `/logo.svg`, `/opengraph-image.png`
+
+## Configuration Files
+
+### next.config.ts
+
+Next.js configuration with Sentry integration:
+
+```ts
+import { withSentryConfig } from "@sentry/nextjs";
+
+const nextConfig = {
+  // Next.js options
+};
+
+export default withSentryConfig(nextConfig, {
+  // Sentry webpack plugin options
+});
+```
+
+### tailwind.config.ts
+
+Tailwind CSS configuration with custom theme:
+
+```ts
+export default {
+  content: ["./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: { /* custom colors */ },
+      fontFamily: {
+        sans: ["var(--font-geist-sans)"],
+        mono: ["var(--font-geist-mono)"],
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+};
+```
+
+### tsconfig.json
+
+TypeScript configuration with path aliases:
+
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@convex/*": ["./convex/*"]
+    }
+  }
+}
+```
+
+**Path alias usage:**
+
+```ts
+// Instead of: import { Button } from "../../../components/ui/button"
+import { Button } from "@/components/ui/button";
+
+// Instead of: import { api } from "../../convex/_generated/api"
+import { api } from "@convex/_generated/api";
+```
+
+## Environment Variables
+
+Environment variables are defined in `.env.example`:
+
+```bash
+# Site
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# Clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+CLERK_JWT_ISSUER_DOMAIN=clerk.your-domain.com
+
+# Convex
+NEXT_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
+
+# PostHog
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+
+# Resend
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=hello@yourdomain.com
+
+# Sentry
+SENTRY_ORG=your-org
+SENTRY_PROJECT=your-project
+```
+
+**Access in code:**
+
+```ts
+// Public (client + server)
+process.env.NEXT_PUBLIC_SITE_URL
+
+// Private (server only)
+process.env.CLERK_SECRET_KEY
+```
+
+## File Naming Conventions
+
+- **Components:** `kebab-case.tsx` (e.g., `dashboard-shell.tsx`)
+- **Hooks:** `use-{name}.ts` (e.g., `use-sync-user.ts`)
+- **Utils:** `kebab-case.ts` (e.g., `rate-limit.ts`)
+- **Routes:** `page.tsx`, `layout.tsx`, `route.ts`, `not-found.tsx`
+- **Convex:** `kebab-case.ts` or feature name (e.g., `users.ts`, `chat.ts`)
+
+## Import Order Convention
+
+```tsx
+// 1. React & Next.js
+import { Suspense } from "react";
+import Link from "next/link";
+
+// 2. Third-party libraries
+import { useQuery } from "convex/react";
+import { useAuth } from "@clerk/nextjs";
+
+// 3. Local components
+import { Button } from "@/components/ui/button";
+import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+
+// 4. Hooks & utils
+import { useSyncUser } from "@/hooks/use-sync-user";
+import { cn } from "@/lib/utils";
+
+// 5. Types
+import type { User } from "@convex/_generated/dataModel";
+
+// 6. Styles (if any)
+import "./styles.css";
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/guides/architecture">
+    Learn about the tech stack and architectural decisions
+  </Card>
+  <Card title="Routing" icon="route" href="/guides/routing">
+    Understand route groups and navigation patterns
+  </Card>
+  <Card title="Components" icon="puzzle-piece" href="/guides/components">
+    Explore available UI components
+  </Card>
+  <Card title="Database" icon="database" href="/features/database">
+    Deep dive into Convex queries and mutations
+  </Card>
+</CardGroup>

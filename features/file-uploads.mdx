@@ -1,0 +1,271 @@
+---
+title: "File Uploads"
+description: "Secure file upload system with Convex storage, validation, and rate limiting"
+---
+
+Shipr includes a production-ready file upload system backed by Convex storage.
+
+## Features
+
+- **Convex storage** - Direct uploads with signed URLs
+- **Server-side validation** - MIME type and size verification
+- **Rate limiting** - Prevents upload abuse
+- **Ownership checks** - Users can only access their own files
+- **Filename sanitization** - Safe storage of user-provided names
+
+## Upload Flow
+
+Convex uses a secure 3-step upload process:
+
+```
+1. Client requests upload URL
+   ↓
+2. Client uploads file directly to Convex storage
+   ↓
+3. Client saves metadata with storageId
+```
+
+### Step 1: Generate Upload URL
+
+```typescript
+const generateUploadUrl = useMutation(api.files.generateUploadUrl);
+const uploadUrl = await generateUploadUrl();
+```
+
+### Step 2: Upload File
+
+```typescript
+const result = await fetch(uploadUrl, {
+  method: "POST",
+  body: file,
+  headers: { "Content-Type": file.type },
+});
+
+const { storageId } = await result.json();
+```
+
+### Step 3: Save Metadata
+
+```typescript
+const saveFile = useMutation(api.files.saveFile);
+await saveFile({
+  storageId,
+  fileName: file.name,
+  mimeType: file.type,
+  size: file.size,
+});
+```
+
+## Convex Schema
+
+```typescript ~/workspace/source/convex/schema.ts
+files: defineTable({
+  storageId: v.id("_storage"),
+  userId: v.id("users"),
+  fileName: v.string(),
+  mimeType: v.string(),
+  size: v.number(),
+})
+  .index("by_user_id", ["userId"])
+  .index("by_storage_id", ["storageId"])
+```
+
+| Field       | Type                | Description                   |
+| ----------- | ------------------- | ----------------------------- |
+| `storageId` | `Id<"_storage">`    | Reference to stored file blob |
+| `userId`    | `Id<"users">`       | File owner                    |
+| `fileName`  | `string`            | Sanitized filename            |
+| `mimeType`  | `string`            | MIME type (e.g., "image/png") |
+| `size`      | `number`            | File size in bytes            |
+
+## Security Validation
+
+The `saveFile` mutation validates files server-side to prevent abuse:
+
+```typescript ~/workspace/source/convex/files.ts
+export const saveFile = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireCurrentUser(ctx);
+
+    // SECURITY: Verify actual file metadata from storage
+    const storedFile = await ctx.db.system.get(args.storageId);
+    if (!storedFile) {
+      throw new Error("Storage ID not found");
+    }
+
+    const actualSize = storedFile.size;
+    const actualMimeType = storedFile.contentType ?? args.mimeType;
+
+    // Validate actual file size (not client-provided)
+    if (actualSize > FILE_STORAGE_LIMITS.maxFileSizeBytes) {
+      await ctx.storage.delete(args.storageId);
+      throw new Error("File too large");
+    }
+
+    // Validate MIME type
+    if (!ALLOWED_MIME_TYPES.has(actualMimeType)) {
+      await ctx.storage.delete(args.storageId);
+      throw new Error("File type not allowed");
+    }
+
+    // Sanitize filename
+    const sanitizedName = args.fileName
+      .replace(/[\/\\]/g, "_")
+      .replace(/[<>:"|?*]/g, "_")
+      .slice(0, 255);
+
+    return await ctx.db.insert("files", {
+      storageId: args.storageId,
+      userId: user._id,
+      fileName: sanitizedName,
+      mimeType: actualMimeType,
+      size: actualSize,
+    });
+  },
+});
+```
+
+<Warning>
+Always validate file metadata from `ctx.db.system.get()` to prevent client-side spoofing of file size and MIME type.
+</Warning>
+
+## Configuration
+
+File upload settings are centralized in `src/lib/files/config.ts`:
+
+```typescript ~/workspace/source/src/lib/files/config.ts
+export const FILE_STORAGE_LIMITS = {
+  maxFileSizeBytes: 10 * 1024 * 1024, // 10 MB
+  maxFilesPerUser: 100,
+} as const;
+
+export const FILE_UPLOAD_RATE_LIMITS = {
+  image: {
+    maxUploadsPerWindow: readNonNegativeIntEnv(
+      "FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS",
+      10,
+    ),
+    windowMs: readNonNegativeIntEnv(
+      "FILE_IMAGE_UPLOAD_RATE_LIMIT_WINDOW_MS",
+      60_000,
+    ),
+  },
+} as const;
+```
+
+## Supported File Types
+
+```typescript ~/workspace/source/src/lib/files/config.ts
+export const FILE_TYPE_CATALOG = [
+  { mimeType: "image/jpeg", label: "JPEG", extensions: [".jpg", ".jpeg"] },
+  { mimeType: "image/png", label: "PNG", extensions: [".png"] },
+  { mimeType: "image/gif", label: "GIF", extensions: [".gif"] },
+  { mimeType: "image/webp", label: "WebP", extensions: [".webp"] },
+  { mimeType: "image/svg+xml", label: "SVG", extensions: [".svg"] },
+  { mimeType: "application/pdf", label: "PDF", extensions: [".pdf"] },
+  { mimeType: "text/plain", label: "Text", extensions: [".txt"] },
+  { mimeType: "text/csv", label: "CSV", extensions: [".csv"] },
+  { mimeType: "application/json", label: "JSON", extensions: [".json"] },
+  // ... Word, Excel documents
+] as const;
+```
+
+## Rate Limiting
+
+Image uploads are rate-limited per user to prevent abuse:
+
+```typescript ~/workspace/source/convex/files.ts
+async function enforceImageUploadRateLimit(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+) {
+  const { maxUploadsPerWindow, windowMs } = FILE_UPLOAD_RATE_LIMITS.image;
+
+  if (maxUploadsPerWindow <= 0 || windowMs <= 0) {
+    return; // Rate limiting disabled
+  }
+
+  const windowStart = Date.now() - windowMs;
+  const userFiles = await ctx.db
+    .query("files")
+    .withIndex("by_user_id", (q) => q.eq("userId", userId))
+    .collect();
+
+  const recentImageUploads = userFiles.filter(
+    (file) =>
+      isImageMimeType(file.mimeType) && file._creationTime >= windowStart,
+  );
+
+  if (recentImageUploads.length >= maxUploadsPerWindow) {
+    throw new Error("Image upload rate limit reached");
+  }
+}
+```
+
+## Environment Variables
+
+```bash .env.example
+# File upload rate limiting (set to 0 to disable)
+FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS=10
+FILE_IMAGE_UPLOAD_RATE_LIMIT_WINDOW_MS=60000
+```
+
+| Variable                                  | Default | Description                    |
+| ----------------------------------------- | ------- | ------------------------------ |
+| `FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS`| `10`    | Max image uploads per window   |
+| `FILE_IMAGE_UPLOAD_RATE_LIMIT_WINDOW_MS`  | `60000` | Rate limit window (1 minute)   |
+
+<Info>
+Set either variable to `0` to disable image upload rate limiting.
+</Info>
+
+## Retrieving Files
+
+Get signed URLs for user files:
+
+```typescript
+const files = useQuery(api.files.getUserFiles);
+
+{files?.map((file) => (
+  <img key={file._id} src={file.url} alt={file.fileName} />
+))}
+```
+
+## Deleting Files
+
+Delete both the storage blob and database record:
+
+```typescript
+const deleteFile = useMutation(api.files.deleteFile);
+
+await deleteFile({ fileId: file._id });
+```
+
+The mutation automatically:
+1. Verifies file ownership
+2. Deletes the blob from Convex storage
+3. Removes the database record
+
+## Adding File Types
+
+To support additional file types:
+
+1. Add the MIME type to `FILE_TYPE_CATALOG` in `src/lib/files/config.ts`
+2. Both UI validation and backend enforcement update automatically
+
+```typescript
+export const FILE_TYPE_CATALOG = [
+  // ... existing types
+  { 
+    mimeType: "video/mp4", 
+    label: "MP4", 
+    extensions: [".mp4"] 
+  },
+] as const;
+```

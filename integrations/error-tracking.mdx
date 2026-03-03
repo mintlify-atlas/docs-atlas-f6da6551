@@ -1,0 +1,282 @@
+---
+title: 'Sentry Error Tracking'
+description: 'Set up error tracking and performance monitoring with Sentry'
+---
+
+Shipr uses [Sentry](https://sentry.io) for error tracking and performance monitoring across server, edge, and client environments.
+
+## Quick Start
+
+<Steps>
+  <Step title="Create Sentry Account">
+    Sign up at [sentry.io](https://sentry.io) and create a new Next.js project. Copy your DSN from the project settings.
+  </Step>
+
+  <Step title="Add Environment Variable">
+    Add your Sentry DSN to `.env.local`:
+
+    ```bash
+    NEXT_PUBLIC_SENTRY_DSN=https://...@....ingest.sentry.io/...
+    ```
+  </Step>
+
+  <Step title="Configure Organization & Project">
+    Update `next.config.ts` with your Sentry organization and project:
+
+    ```ts next.config.ts
+    export default withSentryConfig(nextConfig, {
+      org: "your-org-slug",
+      project: "your-project-name",
+      // ... rest of config
+    });
+    ```
+  </Step>
+</Steps>
+
+## Configuration Files
+
+Sentry is configured in three files for different Next.js runtime environments:
+
+| File | Environment | Purpose |
+| --- | --- | --- |
+| `sentry.server.config.ts` | Server | Node.js server-side errors |
+| `sentry.edge.config.ts` | Edge | Middleware and edge routes |
+| `next.config.ts` | Build | Webpack integration and source maps |
+
+### Server Configuration
+
+```ts sentry.server.config.ts
+import * as Sentry from "@sentry/nextjs";
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+
+  // Lower sample rate in production to reduce costs and noise
+  tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+
+  // Enable logs to be sent to Sentry
+  enableLogs: true,
+
+  // Disable sending user PII by default: opt-in only where needed
+  sendDefaultPii: false,
+});
+```
+
+### Edge Configuration
+
+```ts sentry.edge.config.ts
+import * as Sentry from "@sentry/nextjs";
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+
+  // Lower sample rate in production to reduce costs and noise
+  tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+
+  // Enable logs to be sent to Sentry
+  enableLogs: true,
+
+  // Disable sending user PII by default: opt-in only
+  sendDefaultPii: false,
+});
+```
+
+<Note>
+  Both server and edge configurations use the same settings. The files are separate because they run in different runtime environments.
+</Note>
+
+## Next.js Integration
+
+Sentry is integrated via `withSentryConfig` in `next.config.ts`:
+
+```ts next.config.ts
+import { withSentryConfig } from "@sentry/nextjs";
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  // ... your Next.js config
+};
+
+export default withSentryConfig(nextConfig, {
+  // For all available options, see:
+  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
+
+  org: "ege-uysal",
+  project: "shipr",
+
+  // Only print logs for uploading source maps in CI
+  silent: !process.env.CI,
+
+  // Upload a larger set of source maps for prettier stack traces (increases build time)
+  widenClientFileUpload: true,
+
+  // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers
+  tunnelRoute: "/monitoring",
+
+  webpack: {
+    // Enables automatic instrumentation of Vercel Cron Monitors
+    automaticVercelMonitors: true,
+
+    // Tree-shaking options for reducing bundle size
+    treeshake: {
+      // Automatically tree-shake Sentry logger statements to reduce bundle size
+      removeDebugLogging: true,
+    },
+  },
+});
+```
+
+## Tunnel Route
+
+Sentry uses a tunnel route (`/monitoring`) to bypass ad-blockers. This routes browser requests to Sentry through Next.js:
+
+```ts
+tunnelRoute: "/monitoring"
+```
+
+<Warning>
+  The tunnel route increases server load. Ensure your hosting plan can handle the additional traffic.
+</Warning>
+
+## Sample Rates
+
+Sentry uses different sample rates for development and production:
+
+```ts
+tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0
+```
+
+- **Development**: `1.0` (100% of traces)
+- **Production**: `0.2` (20% of traces)
+
+<Tip>
+  Lower sample rates in production reduce Sentry costs while still capturing enough data for debugging.
+</Tip>
+
+## Privacy & PII
+
+By default, Sentry does not send personally identifiable information (PII):
+
+```ts
+sendDefaultPii: false
+```
+
+To capture user context for specific errors, manually set user data:
+
+```ts
+import * as Sentry from "@sentry/nextjs";
+
+Sentry.setUser({
+  id: user.id,
+  email: user.email,
+});
+```
+
+Clear user data on logout:
+
+```ts
+Sentry.setUser(null);
+```
+
+## Capturing Errors
+
+Sentry automatically captures unhandled errors. You can also manually capture errors:
+
+### Manual Error Capture
+
+```ts
+import * as Sentry from "@sentry/nextjs";
+
+try {
+  // Your code
+} catch (error) {
+  Sentry.captureException(error);
+}
+```
+
+### Custom Messages
+
+```ts
+Sentry.captureMessage("Something went wrong", "error");
+```
+
+### Adding Context
+
+```ts
+Sentry.setContext("payment", {
+  plan: "pro",
+  amount: 12,
+});
+
+Sentry.setTag("feature", "checkout");
+```
+
+## Source Maps
+
+Sentry automatically uploads source maps in production for readable stack traces:
+
+```ts
+widenClientFileUpload: true
+```
+
+<Note>
+  Source maps are only uploaded in CI environments where `process.env.CI` is set.
+</Note>
+
+## Vercel Cron Monitors
+
+Sentry automatically instruments Vercel Cron jobs:
+
+```ts
+automaticVercelMonitors: true
+```
+
+This tracks cron job execution and alerts you when jobs fail.
+
+## Performance Monitoring
+
+Sentry tracks performance metrics automatically. View transaction traces in the Sentry dashboard to identify slow routes and API calls.
+
+To add custom performance tracking:
+
+```ts
+import * as Sentry from "@sentry/nextjs";
+
+const transaction = Sentry.startTransaction({
+  name: "Custom Operation",
+  op: "custom",
+});
+
+try {
+  // Your code
+} finally {
+  transaction.finish();
+}
+```
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SENTRY_DSN` | Yes | Your Sentry project DSN (from Sentry project settings) |
+| `SENTRY_AUTH_TOKEN` | No | Auth token for uploading source maps (set in CI only) |
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Lower Sample Rates in Production">
+    Use a lower `tracesSampleRate` (0.1-0.3) in production to reduce costs while maintaining visibility into critical errors.
+  </Accordion>
+
+  <Accordion title="Avoid Sending PII by Default">
+    Keep `sendDefaultPii: false` and only send user data when necessary for debugging specific issues.
+  </Accordion>
+
+  <Accordion title="Use Tunnel Route">
+    The tunnel route (`/monitoring`) bypasses ad-blockers but increases server load. Monitor your hosting costs.
+  </Accordion>
+
+  <Accordion title="Set Up Alerts">
+    Configure Sentry alerts to notify your team when error rates spike or critical issues occur.
+  </Accordion>
+</AccordionGroup>

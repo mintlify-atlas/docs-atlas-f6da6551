@@ -1,0 +1,186 @@
+---
+title: 'PostHog Analytics'
+description: 'Set up product analytics with PostHog to track user behavior and pageviews'
+---
+
+Shipr uses [PostHog](https://posthog.com) for product analytics, routed through a Next.js reverse proxy to avoid ad-blockers.
+
+## Quick Start
+
+<Steps>
+  <Step title="Get PostHog API Key">
+    Sign up at [posthog.com](https://posthog.com) and create a new project. Copy your project API key from the settings page.
+  </Step>
+
+  <Step title="Add Environment Variables">
+    Add the following to your `.env.local` file:
+
+    ```bash
+    NEXT_PUBLIC_POSTHOG_KEY=phc_...
+    NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    The analytics components are already integrated in `src/app/layout.tsx`. No additional setup is required.
+  </Step>
+</Steps>
+
+## Architecture
+
+Three components handle analytics in the root layout:
+
+| Component | File | Purpose |
+| --- | --- | --- |
+| `PostHogProvider` | `src/components/posthog-provider.tsx` | Initializes the PostHog client and wraps the app |
+| `PostHogPageview` | `src/components/posthog-pageview.tsx` | Captures `$pageview` on route changes |
+| `PostHogIdentify` | `src/components/posthog-identify.tsx` | Links Clerk user identity to PostHog person |
+
+## PostHog Provider
+
+The provider initializes the PostHog client on the client side:
+
+```tsx src/components/posthog-provider.tsx
+"use client";
+
+import posthog from "posthog-js";
+import { PostHogProvider as PHProvider } from "posthog-js/react";
+import { ReactNode } from "react";
+
+if (
+  typeof window !== "undefined" &&
+  process.env.NEXT_PUBLIC_POSTHOG_KEY &&
+  process.env.NEXT_PUBLIC_POSTHOG_HOST
+) {
+  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY, {
+    api_host:
+      process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com",
+    ui_host: "https://us.posthog.com",
+    person_profiles: "identified_only",
+    capture_pageview: false,
+    capture_pageleave: true,
+    debug: false,
+  });
+}
+
+export function PostHogProvider({ children }: { children: ReactNode }) {
+  return <PHProvider client={posthog}>{children}</PHProvider>;
+}
+```
+
+<Note>
+  `capture_pageview` is set to `false` because pageviews are captured manually by `PostHogPageview` to work correctly with Next.js App Router navigation.
+</Note>
+
+## Reverse Proxy Setup
+
+PostHog requests are proxied through Next.js rewrites to bypass ad-blockers. This is configured in `next.config.ts`:
+
+```ts next.config.ts
+async rewrites() {
+  return [
+    {
+      source: "/ingest/static/:path*",
+      destination: "https://us-assets.i.posthog.com/static/:path*",
+    },
+    {
+      source: "/ingest/:path*",
+      destination: "https://us.i.posthog.com/:path*",
+    },
+  ];
+}
+```
+
+This routes:
+- `/ingest/static/*` to `https://us-assets.i.posthog.com/static/*`
+- `/ingest/*` to `https://us.i.posthog.com/*`
+
+## User Identification
+
+The `PostHogIdentify` component automatically identifies users when they sign in with Clerk:
+
+```tsx src/components/posthog-identify.tsx
+"use client";
+
+import { useEffect, useRef } from "react";
+import { useUser, useAuth } from "@clerk/nextjs";
+import posthog from "posthog-js";
+
+export function PostHogIdentify() {
+  const { user, isLoaded, isSignedIn } = useUser();
+  const { has } = useAuth();
+  const identifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    if (isSignedIn && user && !identifiedRef.current) {
+      // Identify user in PostHog
+      const plan = has?.({ plan: "pro" }) ? "pro" : "free";
+      posthog.identify(user.id, {
+        email: user.primaryEmailAddress?.emailAddress,
+        name: user.fullName,
+        first_name: user.firstName,
+        last_name: user.lastName,
+        username: user.username,
+        created_at: user.createdAt,
+        plan,
+      });
+      identifiedRef.current = true;
+    } else if (!isSignedIn && identifiedRef.current) {
+      // Reset PostHog on logout
+      posthog.reset();
+      identifiedRef.current = false;
+    }
+  }, [isLoaded, isSignedIn, user, has]);
+
+  return null;
+}
+```
+
+On sign-out, it calls `posthog.reset()` to clear the person profile.
+
+## Tracked Events
+
+Shipr tracks the following events out of the box:
+
+| Event | Location | Description |
+| --- | --- | --- |
+| `$pageview` | `posthog-pageview.tsx` | Every route change |
+| `cta_clicked` | Hero, CTA sections | User clicked a call-to-action button |
+| `pricing_plan_clicked` | Pricing section | User selected a pricing plan |
+| `upgrade_button_clicked` | Dashboard | User clicked upgrade |
+| `faq_expanded` | FAQ section | User opened a FAQ item |
+| `navigation_clicked` | Header | Nav link clicked (includes device type) |
+| `mobile_menu_toggled` | Header | Mobile menu opened/closed |
+| `theme_toggled` | Theme toggle | Theme changed (includes previous/new theme) |
+
+## Capturing Custom Events
+
+Capture custom events anywhere in your app:
+
+```tsx
+import posthog from "posthog-js";
+
+function MyComponent() {
+  const handleClick = () => {
+    posthog.capture("custom_event_name", {
+      property_key: "property_value",
+      user_action: "button_click",
+    });
+  };
+
+  return <button onClick={handleClick}>Track This</button>;
+}
+```
+
+<Note>
+  Keep event names in `snake_case` and include relevant context as properties.
+</Note>
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `NEXT_PUBLIC_POSTHOG_KEY` | Yes | Your PostHog project API key (starts with `phc_`) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | Yes | PostHog API host (usually `https://us.i.posthog.com`) |

@@ -1,0 +1,273 @@
+---
+title: Environment Variables
+description: Complete reference for all Shipr environment variables
+---
+
+## Overview
+
+Shipr uses environment variables for configuration. Copy `.env.example` to `.env` and configure the values:
+
+```bash
+cp .env.example .env
+```
+
+## Required Variables
+
+These variables are required for core functionality.
+
+### Site Configuration
+
+<ParamField path="NEXT_PUBLIC_SITE_URL" type="string" required>
+  Your production URL used for metadata, sitemap, canonical URLs, and OG images.
+  
+  **Example:** `https://shipr.dev`
+</ParamField>
+
+### Clerk Authentication
+
+<ParamField path="NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" type="string" required>
+  Clerk publishable key for client-side authentication.
+  
+  **Example:** `pk_test_...`
+  
+  Find this in your [Clerk Dashboard](https://dashboard.clerk.com) under API Keys.
+</ParamField>
+
+<ParamField path="CLERK_SECRET_KEY" type="string" required>
+  Clerk secret key for server-side authentication.
+  
+  **Example:** `sk_test_...`
+  
+  **Important:** Keep this secret and never expose it to the client.
+</ParamField>
+
+<ParamField path="CLERK_JWT_ISSUER_DOMAIN" type="string" required>
+  Clerk JWT issuer domain for Convex authentication integration.
+  
+  **Example:** `https://caring-bear-12.clerk.accounts.dev`
+  
+  This must also be configured in the Convex Dashboard under Authentication settings.
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CLERK_SIGN_IN_URL" type="string" default="/sign-in">
+  Path to the sign-in page.
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CLERK_SIGN_UP_URL" type="string" default="/sign-up">
+  Path to the sign-up page.
+</ParamField>
+
+### Convex Database
+
+<ParamField path="NEXT_PUBLIC_CONVEX_URL" type="string" required>
+  Convex deployment URL for your backend.
+  
+  **Example:** `https://happy-cat-123.convex.cloud`
+  
+  Get this from running `npx convex dev` or `npx convex deploy`.
+</ParamField>
+
+### Vercel AI Gateway
+
+<ParamField path="AI_GATEWAY_API_KEY" type="string" required>
+  Vercel AI Gateway key for the dashboard chat feature.
+  
+  **Example:** `vck_...`
+  
+  Create this in your [Vercel Dashboard](https://vercel.com/dashboard) under AI Gateway settings.
+</ParamField>
+
+### Email (Resend)
+
+<ParamField path="RESEND_API_KEY" type="string" required>
+  Resend API key for sending transactional emails.
+  
+  **Example:** `re_...`
+  
+  Get this from [resend.com/api-keys](https://resend.com/api-keys).
+</ParamField>
+
+<ParamField path="RESEND_FROM_EMAIL" type="string" default="onboarding@resend.dev">
+  Sender email address for transactional emails.
+  
+  **Example:** `hello@yourdomain.com`
+  
+  Must be a verified domain in Resend. The default only works in sandbox mode.
+</ParamField>
+
+## AI Chat Configuration
+
+These variables configure the AI chat assistant in `/dashboard/chat`.
+
+### Model Settings
+
+<ParamField path="AI_CHAT_MODEL" type="string" default="openai/gpt-4.1-mini">
+  The AI model to use for chat responses.
+  
+  **Example:** `openai/gpt-4.1-mini` or `anthropic/claude-3-5-sonnet-20241022`
+</ParamField>
+
+<ParamField path="AI_CHAT_SYSTEM_PROMPT" type="string" default="You are Shipr's AI assistant helping builders ship SaaS faster.">
+  System prompt that defines the AI assistant's behavior and personality.
+</ParamField>
+
+<ParamField path="AI_CHAT_TOOLS" type="string" default="getCurrentDateTime,calculate">
+  Comma-separated list of enabled tool names for the chat assistant.
+  
+  Available tools:
+  - `getCurrentDateTime` - Get current date and time
+  - `calculate` - Perform calculations
+</ParamField>
+
+<ParamField path="AI_CHAT_MAX_STEPS" type="number" default="5">
+  Maximum number of model steps or tool calls per response.
+  
+  Prevents infinite loops and controls costs.
+</ParamField>
+
+### Rate Limiting
+
+<ParamField path="AI_CHAT_RATE_LIMIT_MAX_REQUESTS" type="number" default="20">
+  Maximum number of chat requests allowed per rate limit window.
+</ParamField>
+
+<ParamField path="AI_CHAT_RATE_LIMIT_WINDOW_MS" type="number" default="60000">
+  Rate limit window duration in milliseconds.
+  
+  **Default:** `60000` (1 minute)
+</ParamField>
+
+### Lifetime Message Limits
+
+<ParamField path="AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT" type="boolean" default="true">
+  Enable or disable lifetime per-user message caps.
+  
+  Set to `false` to allow unlimited messages per user.
+</ParamField>
+
+<ParamField path="AI_CHAT_LIFETIME_MESSAGE_LIMIT" type="number" default="1">
+  Total message cap per user when enforcement is enabled.
+  
+  Useful for preventing abuse in boilerplate demos. Increase for production.
+</ParamField>
+
+### Chat History
+
+<ParamField path="AI_CHAT_HISTORY_ENABLED" type="boolean" default="true">
+  Enable or disable Convex chat history persistence.
+  
+  Set to `false` to disable saving chat messages to the database.
+</ParamField>
+
+<ParamField path="AI_CHAT_HISTORY_MAX_MESSAGE_LENGTH" type="number" default="8000">
+  Maximum character length per persisted chat message.
+  
+  Messages longer than this will be truncated before storage.
+</ParamField>
+
+<ParamField path="AI_CHAT_HISTORY_MAX_MESSAGES_PER_THREAD" type="number" default="120">
+  Maximum number of persisted messages per chat thread.
+  
+  Older messages are removed when this limit is exceeded.
+</ParamField>
+
+<ParamField path="AI_CHAT_HISTORY_MAX_THREADS" type="number" default="50">
+  Maximum number of chat threads per user.
+  
+  Oldest threads are removed when this limit is exceeded.
+</ParamField>
+
+<ParamField path="AI_CHAT_HISTORY_THREAD_TITLE_MAX_LENGTH" type="number" default="80">
+  Maximum character length for auto-generated chat thread titles.
+</ParamField>
+
+<ParamField path="AI_CHAT_HISTORY_QUERY_LIMIT" type="number" default="200">
+  Maximum number of persisted messages returned to the chat UI.
+  
+  Controls how much history is loaded in the chat interface.
+</ParamField>
+
+## File Upload Configuration
+
+<ParamField path="FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS" type="number" default="10">
+  Maximum number of image uploads allowed per user in each rate limit window.
+  
+  Set to `0` to disable rate limiting.
+</ParamField>
+
+<ParamField path="FILE_IMAGE_UPLOAD_RATE_LIMIT_WINDOW_MS" type="number" default="60000">
+  Image upload rate limit window duration in milliseconds.
+  
+  **Default:** `60000` (1 minute)
+  
+  Set to `0` to disable rate limiting.
+</ParamField>
+
+## Optional Services
+
+These services enhance your application but are not required for core functionality.
+
+### PostHog Analytics
+
+<ParamField path="NEXT_PUBLIC_POSTHOG_KEY" type="string">
+  PostHog project API key for analytics.
+  
+  **Example:** `phc_...`
+  
+  Get this from your [PostHog project settings](https://posthog.com).
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_POSTHOG_HOST" type="string">
+  PostHog ingest host URL.
+  
+  **Example:** `https://us.i.posthog.com`
+  
+  Shipr uses a reverse proxy via Next.js rewrites to bypass ad blockers (configured in `next.config.ts`).
+</ParamField>
+
+### Sentry Error Tracking
+
+<ParamField path="SENTRY_AUTH_TOKEN" type="string">
+  Sentry authentication token for uploading source maps during build.
+  
+  **Example:** `sntrys_...`
+  
+  Create this in your [Sentry account settings](https://sentry.io/settings/account/api/auth-tokens/).
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_SENTRY_DSN" type="string">
+  Sentry DSN for error reporting to your Sentry project.
+  
+  **Example:** `https://...@...ingest.us.sentry.io/...`
+  
+  Source maps are automatically uploaded during build via `@sentry/nextjs`. Error tracking helpers are available in `src/lib/sentry.ts`.
+</ParamField>
+
+## Environment-Specific Configuration
+
+### Development
+
+For local development:
+- Use Clerk test keys (`pk_test_...`, `sk_test_...`)
+- Run `npx convex dev` to get a development Convex URL
+- Use Resend sandbox sender (`onboarding@resend.dev`)
+- Set `NEXT_PUBLIC_SITE_URL` to `http://localhost:3000`
+
+### Production
+
+For production deployment:
+- Use Clerk production keys
+- Run `npx convex deploy` to get a production Convex URL
+- Use a verified domain for `RESEND_FROM_EMAIL`
+- Set `NEXT_PUBLIC_SITE_URL` to your actual domain
+- Review and adjust all rate limits and message caps
+- Configure optional services (PostHog, Sentry) for monitoring
+
+## Security Best Practices
+
+1. **Never commit `.env` files** - they contain secrets
+2. **Use different keys for development and production**
+3. **Rotate API keys regularly**
+4. **Store secrets in Vercel environment variables**, not in your repository
+5. **Limit API key permissions** to only what's needed
+6. **Monitor usage** of paid services (AI Gateway, Resend) to prevent abuse

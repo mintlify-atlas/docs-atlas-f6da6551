@@ -1,0 +1,214 @@
+---
+title: Deployment
+description: Deploy your Shipr application to production with Vercel and Convex
+---
+
+## Overview
+
+Shipr is optimized for deployment on Vercel with Convex as the backend. This guide covers deploying your Next.js application, setting up Convex, and configuring all required services.
+
+## Vercel Deployment
+
+<Steps>
+  <Step title="Push to GitHub">
+    Push your repository to GitHub:
+    
+    ```bash
+    git add .
+    git commit -m "Initial commit"
+    git push origin main
+    ```
+  </Step>
+
+  <Step title="Import to Vercel">
+    1. Go to [vercel.com/new](https://vercel.com/new)
+    2. Import your GitHub repository
+    3. Vercel will auto-detect Next.js configuration
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Add all required environment variables in the Vercel dashboard under **Settings → Environment Variables**.
+    
+    See the [Environment Variables](/deployment/environment-variables) page for a complete reference.
+    
+    Required variables:
+    - `NEXT_PUBLIC_SITE_URL`
+    - `NEXT_PUBLIC_CONVEX_URL`
+    - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+    - `CLERK_SECRET_KEY`
+    - `CLERK_JWT_ISSUER_DOMAIN`
+    - `AI_GATEWAY_API_KEY`
+    - `RESEND_API_KEY`
+  </Step>
+
+  <Step title="Deploy">
+    Click **Deploy**. Vercel will automatically build and deploy your application.
+  </Step>
+</Steps>
+
+### Build Settings
+
+Vercel should auto-detect these settings, but verify:
+
+- **Framework:** Next.js
+- **Build Command:** `pnpm build`
+- **Output Directory:** `.next`
+- **Install Command:** `pnpm install`
+
+## Convex Deployment
+
+Convex serves as your backend database and real-time sync layer.
+
+<Steps>
+  <Step title="Install Convex CLI">
+    Install the Convex CLI globally:
+    
+    ```bash
+    pnpm add -g convex
+    ```
+  </Step>
+
+  <Step title="Sync Schema Locally">
+    Run Convex in development mode to sync your schema:
+    
+    ```bash
+    npx convex dev
+    ```
+    
+    This creates your development Convex deployment and syncs your schema from the `convex/` directory.
+  </Step>
+
+  <Step title="Deploy to Production">
+    Deploy your Convex functions to production:
+    
+    ```bash
+    npx convex deploy
+    ```
+    
+    This creates a production deployment and provides your `NEXT_PUBLIC_CONVEX_URL`.
+  </Step>
+
+  <Step title="Configure Clerk Authentication">
+    1. Go to the [Convex Dashboard](https://dashboard.convex.dev)
+    2. Navigate to your production deployment
+    3. Go to **Settings → Authentication**
+    4. Add `CLERK_JWT_ISSUER_DOMAIN` from your Clerk dashboard
+    
+    This enables Convex to verify Clerk JWT tokens for authenticated queries and mutations.
+  </Step>
+</Steps>
+
+## Service Configuration
+
+### Clerk
+
+<Steps>
+  <Step title="Create Clerk Application">
+    1. Sign up at [clerk.com](https://clerk.com)
+    2. Create a new application
+    3. Choose your authentication methods (email, social, etc.)
+  </Step>
+
+  <Step title="Copy API Keys">
+    Copy these values to your environment variables:
+    - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+    - `CLERK_SECRET_KEY`
+    - `CLERK_JWT_ISSUER_DOMAIN`
+  </Step>
+
+  <Step title="Configure Billing (Optional)">
+    Enable Clerk Billing if you want to use Pro/Free plan gating features in your SaaS.
+  </Step>
+</Steps>
+
+### Resend
+
+<Steps>
+  <Step title="Create Resend Account">
+    Sign up at [resend.com](https://resend.com)
+  </Step>
+
+  <Step title="Add Verified Domain">
+    Add and verify your sending domain, or use the sandbox sender for testing.
+  </Step>
+
+  <Step title="Configure API Key">
+    1. Generate an API key in the Resend dashboard
+    2. Add `RESEND_API_KEY` to your environment variables
+    3. Set `RESEND_FROM_EMAIL` to your verified sender address (e.g., `hello@yourdomain.com`)
+    
+    The default is `onboarding@resend.dev` which only works in sandbox mode.
+  </Step>
+</Steps>
+
+The email system is configured in `src/lib/emails/send.ts` and available via `POST /api/email`.
+
+### Sentry (Optional)
+
+<Steps>
+  <Step title="Create Sentry Project">
+    1. Sign up at [sentry.io](https://sentry.io)
+    2. Create a new Next.js project
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Add these to your environment:
+    - `SENTRY_AUTH_TOKEN` - for uploading source maps
+    - `NEXT_PUBLIC_SENTRY_DSN` - for error reporting
+  </Step>
+</Steps>
+
+Source maps are automatically uploaded during build via `@sentry/nextjs`. Error tracking helpers are available in `src/lib/sentry.ts`.
+
+### PostHog (Optional)
+
+<Steps>
+  <Step title="Create PostHog Project">
+    Sign up at [posthog.com](https://posthog.com) and create a project.
+  </Step>
+
+  <Step title="Add Environment Variables">
+    - `NEXT_PUBLIC_POSTHOG_KEY` - your project API key
+    - `NEXT_PUBLIC_POSTHOG_HOST` - ingest host (e.g., `https://us.i.posthog.com`)
+  </Step>
+</Steps>
+
+Shipr uses a reverse proxy via Next.js rewrites (configured in `next.config.ts`) to bypass ad blockers.
+
+## Production Considerations
+
+### Environment Variables
+
+Ensure all production URLs are correctly set:
+- `NEXT_PUBLIC_SITE_URL` should match your production domain
+- `NEXT_PUBLIC_CONVEX_URL` should point to your production Convex deployment
+- All secret keys should be different from development
+
+### Rate Limiting
+
+Configure rate limits for production usage:
+- `AI_CHAT_RATE_LIMIT_MAX_REQUESTS` - chat requests per window
+- `AI_CHAT_RATE_LIMIT_WINDOW_MS` - rate limit window duration
+- `FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS` - image uploads per window
+
+### AI Chat Limits
+
+Set appropriate limits for your SaaS:
+- `AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT` - enable message caps
+- `AI_CHAT_LIFETIME_MESSAGE_LIMIT` - total messages per user
+- `AI_CHAT_HISTORY_MAX_THREADS` - max chat threads per user
+
+### Build Output
+
+Vercel automatically builds your Next.js application. Monitor build logs for:
+- TypeScript errors
+- Missing environment variables
+- Build warnings
+- Bundle size issues
+
+### Domain Configuration
+
+1. Add your custom domain in Vercel dashboard
+2. Update DNS records as instructed
+3. Update `NEXT_PUBLIC_SITE_URL` to match your domain
+4. Redeploy to regenerate metadata and sitemaps

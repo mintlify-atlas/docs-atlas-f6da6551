@@ -1,0 +1,284 @@
+---
+title: "Email"
+description: "Transactional email system with Resend and rate limiting"
+---
+
+Shipr includes a production-ready email system powered by [Resend](https://resend.com).
+
+## Features
+
+- **Template system** - Predefined email templates
+- **Rate limiting** - Prevents email abuse
+- **Authentication required** - Only authenticated users can send emails
+- **Type-safe payloads** - TypeScript validation for email data
+
+## Email Templates
+
+Two templates are included out of the box:
+
+### Welcome Email
+
+Sent when a user completes onboarding or signs up.
+
+### Plan Changed Email
+
+Sent when a user upgrades or downgrades their billing plan.
+
+## API Route
+
+The email API route handles authentication, validation, and sending:
+
+```typescript ~/workspace/source/src/app/api/email/route.ts
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { sendEmail, welcomeEmail, planChangedEmail } from "@/lib/emails";
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 10 });
+
+export async function POST(req: Request): Promise<NextResponse> {
+  // Rate limiting by IP
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success: allowed } = limiter.check(ip);
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      { status: 429 }
+    );
+  }
+
+  // Authentication required
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
+  const user = await currentUser();
+  if (!user?.primaryEmailAddress?.emailAddress) {
+    return NextResponse.json(
+      { error: "No email address found" },
+      { status: 400 }
+    );
+  }
+
+  // Validate payload
+  const body = await req.json();
+  if (!isValidPayload(body)) {
+    return NextResponse.json(
+      { error: "Invalid payload" },
+      { status: 400 }
+    );
+  }
+
+  // Build and send email
+  const { subject, html } = buildEmail(body);
+  const result = await sendEmail({
+    to: user.primaryEmailAddress.emailAddress,
+    subject,
+    html,
+  });
+
+  if (!result.success) {
+    return NextResponse.json(
+      { error: "Failed to send email", details: result.error },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json({ status: "sent", id: result.id });
+}
+```
+
+## Environment Variables
+
+```bash .env.example
+# Resend
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=onboarding@resend.dev
+```
+
+| Variable             | Description                      |
+| -------------------- | -------------------------------- |
+| `RESEND_API_KEY`     | Resend API key (required)        |
+| `RESEND_FROM_EMAIL`  | Sender email address (optional)  |
+
+<Info>
+If `RESEND_FROM_EMAIL` is not set, it defaults to `onboarding@resend.dev`.
+</Info>
+
+## Sending Emails
+
+### From Client Components
+
+```typescript
+const sendWelcomeEmail = async () => {
+  const response = await fetch("/api/email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      template: "welcome",
+      name: "John Doe",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to send email");
+  }
+
+  const result = await response.json();
+  console.log("Email sent:", result.id);
+};
+```
+
+### Welcome Email Payload
+
+```typescript
+interface WelcomePayload {
+  template: "welcome";
+  name: string;
+}
+```
+
+### Plan Changed Email Payload
+
+```typescript
+interface PlanChangedPayload {
+  template: "plan-changed";
+  name: string;
+  previousPlan: string;
+  newPlan: string;
+}
+```
+
+## Rate Limiting
+
+The email endpoint is rate-limited to prevent abuse:
+
+- **10 requests per minute** per IP address
+- Rate limit headers included in response:
+  - `X-RateLimit-Remaining` - Requests remaining
+  - `X-RateLimit-Reset` - Reset timestamp
+  - `Retry-After` - Seconds until retry (on 429)
+
+```typescript
+const limiter = rateLimit({ 
+  interval: 60_000, // 1 minute
+  limit: 10         // 10 requests
+});
+```
+
+## Payload Validation
+
+Request bodies are validated before sending:
+
+```typescript ~/workspace/source/src/app/api/email/route.ts
+function isValidPayload(body: unknown): body is EmailPayload {
+  if (typeof body !== "object" || body === null) return false;
+
+  const payload = body as Record<string, unknown>;
+
+  if (payload.template === "welcome") {
+    return typeof payload.name === "string" && payload.name.length > 0;
+  }
+
+  if (payload.template === "plan-changed") {
+    return (
+      typeof payload.name === "string" &&
+      payload.name.length > 0 &&
+      typeof payload.previousPlan === "string" &&
+      payload.previousPlan.length > 0 &&
+      typeof payload.newPlan === "string" &&
+      payload.newPlan.length > 0
+    );
+  }
+
+  return false;
+}
+```
+
+## Adding Email Templates
+
+1. Create a new template file in `src/lib/emails/`
+
+```typescript src/lib/emails/password-reset.ts
+export interface PasswordResetEmailProps {
+  name: string;
+  resetUrl: string;
+}
+
+export function passwordResetEmail(props: PasswordResetEmailProps) {
+  return {
+    subject: "Reset your password",
+    html: `
+      <h1>Hi ${props.name}</h1>
+      <p>Click the link below to reset your password:</p>
+      <a href="${props.resetUrl}">Reset Password</a>
+    `,
+  };
+}
+```
+
+2. Export from `src/lib/emails/index.ts`
+
+```typescript
+export { passwordResetEmail } from "./password-reset";
+export type { PasswordResetEmailProps } from "./password-reset";
+```
+
+3. Add template type and validation to `src/app/api/email/route.ts`
+
+```typescript
+type EmailTemplate = "welcome" | "plan-changed" | "password-reset";
+
+interface PasswordResetPayload {
+  template: "password-reset";
+  name: string;
+  resetUrl: string;
+}
+
+type EmailPayload = 
+  | WelcomePayload 
+  | PlanChangedPayload 
+  | PasswordResetPayload;
+```
+
+4. Add template to `buildEmail` function
+
+```typescript
+function buildEmail(payload: EmailPayload) {
+  switch (payload.template) {
+    case "welcome":
+      return welcomeEmail({ name: payload.name });
+    case "plan-changed":
+      return planChangedEmail({
+        name: payload.name,
+        previousPlan: payload.previousPlan,
+        newPlan: payload.newPlan,
+      });
+    case "password-reset":
+      return passwordResetEmail({
+        name: payload.name,
+        resetUrl: payload.resetUrl,
+      });
+  }
+}
+```
+
+## Error Handling
+
+The API route returns different status codes for different errors:
+
+| Status | Error                      | Cause                           |
+| ------ | -------------------------- | ------------------------------- |
+| `401`  | Unauthorized               | User not authenticated          |
+| `400`  | Invalid payload            | Missing or invalid fields       |
+| `400`  | No email address found     | User has no email in Clerk      |
+| `429`  | Too many requests          | Rate limit exceeded             |
+| `502`  | Failed to send email       | Resend API error                |
+
+<Warning>
+Always handle errors gracefully in your client code. The API returns detailed error messages in the response body.
+</Warning>

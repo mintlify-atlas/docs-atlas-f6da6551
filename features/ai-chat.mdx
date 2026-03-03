@@ -1,0 +1,238 @@
+---
+title: "AI Chat"
+description: "Production-ready AI chat with Vercel AI SDK, rate limiting, and conversation history"
+---
+
+Shipr includes a production-ready AI chat feature powered by the Vercel AI SDK and AI Gateway.
+
+## Features
+
+- **Streaming responses** - Real-time token streaming with `streamText`
+- **Tool calling** - Extensible tool registry for function calling
+- **Rate limiting** - Per-user and per-IP request throttling
+- **Conversation history** - Persistent threads stored in Convex
+- **Lifetime message cap** - Anti-abuse protection for boilerplate distribution
+
+## Architecture
+
+```
+User types message in /dashboard/chat
+        |
+  useChat hook (Vercel AI SDK)
+        |
+   POST /api/chat
+        |
+  Authentication & Rate Limiting
+        |
+    streamText (AI Gateway)
+        |
+  Streaming response back to UI
+```
+
+## API Route
+
+The chat API route handles authentication, rate limiting, and streaming:
+
+```typescript ~/workspace/source/src/app/api/chat/route.ts
+import { auth } from "@clerk/nextjs/server";
+import { streamText } from "ai";
+import { chatConfig } from "@/lib/ai/chat-config";
+import { rateLimit } from "@/lib/rate-limit";
+
+export const maxDuration = 30;
+
+const limiter = rateLimit({
+  interval: chatConfig.rateLimit.intervalMs,
+  limit: chatConfig.rateLimit.maxRequests,
+});
+
+export async function POST(req: Request): Promise<Response> {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Rate limiting
+  const forwardedFor = req.headers.get("x-forwarded-for") ?? "unknown";
+  const ip = forwardedFor.split(",")[0]?.trim() || "unknown";
+  const { success } = limiter.check(`${userId}:${ip}`);
+
+  if (!success) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      { status: 429 }
+    );
+  }
+
+  // Stream AI response
+  const result = streamText({
+    model: chatConfig.model,
+    system: chatConfig.systemPrompt,
+    messages: await convertToModelMessages(body.messages),
+  });
+
+  return result.toUIMessageStreamResponse();
+}
+```
+
+## Configuration
+
+Chat behavior is configured via environment variables:
+
+```typescript ~/workspace/source/src/lib/ai/chat-config.ts
+export const chatConfig = {
+  model: readStringEnv("AI_CHAT_MODEL", "openai/gpt-4.1-mini"),
+  systemPrompt: readStringEnv(
+    "AI_CHAT_SYSTEM_PROMPT",
+    "You are Shipr's AI assistant..."
+  ),
+  maxSteps: readPositiveIntEnv("AI_CHAT_MAX_STEPS", 5),
+  enabledTools: readCsvEnv("AI_CHAT_TOOLS", ["getCurrentDateTime", "calculate"]),
+  rateLimit: {
+    intervalMs: readPositiveIntEnv("AI_CHAT_RATE_LIMIT_WINDOW_MS", 60_000),
+    maxRequests: readPositiveIntEnv("AI_CHAT_RATE_LIMIT_MAX_REQUESTS", 20),
+  },
+  lifetimeMessageLimit: {
+    enabled: readBooleanEnv("AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT", true),
+    maxMessages: readPositiveIntEnv("AI_CHAT_LIFETIME_MESSAGE_LIMIT", 1),
+  },
+} as const;
+```
+
+## Environment Variables
+
+```bash .env.example
+# Vercel AI Gateway
+AI_GATEWAY_API_KEY=vck_...
+
+# AI Chat defaults
+AI_CHAT_MODEL=openai/gpt-4.1-mini
+AI_CHAT_SYSTEM_PROMPT=You are Shipr's AI assistant helping builders ship SaaS faster.
+AI_CHAT_TOOLS=getCurrentDateTime,calculate
+AI_CHAT_MAX_STEPS=5
+AI_CHAT_RATE_LIMIT_MAX_REQUESTS=20
+AI_CHAT_RATE_LIMIT_WINDOW_MS=60000
+
+# Lifetime message cap (boilerplate abuse protection)
+AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT=true
+AI_CHAT_LIFETIME_MESSAGE_LIMIT=1
+
+# Conversation history
+AI_CHAT_HISTORY_ENABLED=true
+AI_CHAT_HISTORY_MAX_MESSAGE_LENGTH=8000
+AI_CHAT_HISTORY_MAX_MESSAGES_PER_THREAD=120
+AI_CHAT_HISTORY_MAX_THREADS=50
+AI_CHAT_HISTORY_THREAD_TITLE_MAX_LENGTH=80
+AI_CHAT_HISTORY_QUERY_LIMIT=200
+```
+
+| Variable                                  | Default                   | Description                           |
+| ----------------------------------------- | ------------------------- | ------------------------------------- |
+| `AI_GATEWAY_API_KEY`                      | Required                  | Vercel AI Gateway API key             |
+| `AI_CHAT_MODEL`                           | `openai/gpt-4.1-mini`     | Model ID for generation               |
+| `AI_CHAT_SYSTEM_PROMPT`                   | Shipr assistant prompt    | Base system prompt                    |
+| `AI_CHAT_TOOLS`                           | `getCurrentDateTime,calc` | Comma-separated tool names            |
+| `AI_CHAT_MAX_STEPS`                       | `5`                       | Max tool calling iterations           |
+| `AI_CHAT_RATE_LIMIT_MAX_REQUESTS`         | `20`                      | Requests per window                   |
+| `AI_CHAT_RATE_LIMIT_WINDOW_MS`            | `60000`                   | Rate limit window (milliseconds)      |
+| `AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT`  | `true`                    | Enable one-time message cap           |
+| `AI_CHAT_LIFETIME_MESSAGE_LIMIT`          | `1`                       | Max lifetime messages per account     |
+| `AI_CHAT_HISTORY_ENABLED`                 | `true`                    | Enable Convex chat history            |
+| `AI_CHAT_HISTORY_MAX_MESSAGE_LENGTH`      | `8000`                    | Max chars per message                 |
+| `AI_CHAT_HISTORY_MAX_MESSAGES_PER_THREAD` | `120`                     | Max messages per thread               |
+| `AI_CHAT_HISTORY_MAX_THREADS`             | `50`                      | Max threads per user                  |
+
+## Rate Limiting
+
+Two layers of rate limiting protect the chat endpoint:
+
+### 1. Request Rate Limiting
+
+Limits requests per user/IP combination:
+
+```typescript
+const limiter = rateLimit({
+  interval: 60_000, // 1 minute
+  limit: 20,        // 20 requests
+});
+
+const { success, remaining, reset } = limiter.check(`${userId}:${ip}`);
+```
+
+### 2. Lifetime Message Cap
+
+Prevents abuse of the boilerplate by limiting total messages:
+
+```typescript
+if (chatConfig.lifetimeMessageLimit.enabled) {
+  const messageAllowance = await claimLifetimeChatMessage(userId);
+  if (!messageAllowance.allowed) {
+    return NextResponse.json(
+      { error: "Message limit reached" },
+      { status: 403 }
+    );
+  }
+}
+```
+
+<Warning>
+Disable the lifetime message cap in production by setting `AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT=false`.
+</Warning>
+
+## Conversation History
+
+Chat threads and messages are stored in Convex for persistence:
+
+```typescript
+chatThreads: defineTable({
+  userId: v.id("users"),
+  title: v.string(),
+  lastMessageAt: v.number(),
+})
+  .index("by_user_id", ["userId"])
+  .index("by_user_id_last_message", ["userId", "lastMessageAt"])
+
+chatMessages: defineTable({
+  userId: v.id("users"),
+  threadId: v.id("chatThreads"),
+  role: v.union(v.literal("user"), v.literal("assistant")),
+  content: v.string(),
+})
+  .index("by_thread_id", ["threadId"])
+```
+
+## Adding Tools
+
+Extend chat capabilities by adding tools to the registry:
+
+1. Define the tool in `src/lib/ai/tools/registry.ts`
+2. Add its key to `AI_CHAT_TOOLS` in `.env`
+3. The route automatically picks up the new tool
+
+```typescript
+export const tools = {
+  getCurrentDateTime: tool({
+    description: "Get the current date and time",
+    parameters: z.object({}),
+    execute: async () => new Date().toISOString(),
+  }),
+  // Add your custom tool here
+};
+```
+
+## Error Handling
+
+The chat UI uses Sonner toasts for user-friendly error messages:
+
+```typescript
+const { messages, input, handleSubmit } = useChat({
+  api: "/api/chat",
+  onError: (error) => {
+    toast.error(error.message || "Failed to send message");
+  },
+});
+```
+
+<Info>
+Errors are displayed as toasts instead of inline in the chat to maintain a clean UX.
+</Info>

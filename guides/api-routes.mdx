@@ -1,0 +1,583 @@
+---
+title: API Routes
+description: Creating and customizing Next.js API routes with authentication and rate limiting
+---
+
+## Overview
+
+Shipr uses Next.js 15 App Router API routes with built-in authentication, rate limiting, and type-safe request handling. All API routes are located in `src/app/api/`.
+
+## API Route Structure
+
+API routes use the Route Handler convention:
+
+```
+src/app/api/
+├── chat/
+│   └── route.ts       # POST /api/chat
+├── email/
+│   └── route.ts       # POST /api/email
+└── health/
+    └── route.ts       # GET /api/health
+```
+
+## Basic API Route
+
+Create a file at `src/app/api/[endpoint]/route.ts`:
+
+```typescript
+import { NextResponse } from "next/server";
+
+export async function GET(req: Request): Promise<NextResponse> {
+  return NextResponse.json({ message: "Hello from API" });
+}
+
+export async function POST(req: Request): Promise<NextResponse> {
+  const body = await req.json();
+  return NextResponse.json({ received: body });
+}
+```
+
+## Health Check Endpoint
+
+A simple health check endpoint with rate limiting (`src/app/api/health/route.ts`):
+
+```typescript
+import { NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 30 });
+
+export function GET(req: Request): NextResponse {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success, remaining, reset } = limiter.check(ip);
+
+  const headers = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+  };
+
+  if (!success) {
+    return NextResponse.json(
+      { status: "error", message: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  return NextResponse.json(
+    {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    },
+    { status: 200, headers },
+  );
+}
+```
+
+**Usage**:
+```bash
+curl https://yourdomain.com/api/health
+```
+
+**Response**:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-03-15T10:30:00.000Z",
+  "uptime": 123.456
+}
+```
+
+## Email API Route
+
+Authenticated email sending with type-safe payload validation (`src/app/api/email/route.ts`):
+
+```typescript
+import { NextResponse } from "next/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { rateLimit } from "@/lib/rate-limit";
+import { sendEmail, welcomeEmail, planChangedEmail } from "@/lib/emails";
+
+const limiter = rateLimit({ interval: 60_000, limit: 10 });
+
+type EmailTemplate = "welcome" | "plan-changed";
+
+interface WelcomePayload {
+  template: "welcome";
+  name: string;
+}
+
+interface PlanChangedPayload {
+  template: "plan-changed";
+  name: string;
+  previousPlan: string;
+  newPlan: string;
+}
+
+type EmailPayload = WelcomePayload | PlanChangedPayload;
+
+function isValidPayload(body: unknown): body is EmailPayload {
+  if (typeof body !== "object" || body === null) return false;
+
+  const payload = body as Record<string, unknown>;
+
+  if (payload.template === "welcome") {
+    return typeof payload.name === "string" && payload.name.length > 0;
+  }
+
+  if (payload.template === "plan-changed") {
+    return (
+      typeof payload.name === "string" &&
+      payload.name.length > 0 &&
+      typeof payload.previousPlan === "string" &&
+      payload.previousPlan.length > 0 &&
+      typeof payload.newPlan === "string" &&
+      payload.newPlan.length > 0
+    );
+  }
+
+  return false;
+}
+
+function buildEmail(payload: EmailPayload): { subject: string; html: string } {
+  switch (payload.template) {
+    case "welcome":
+      return welcomeEmail({ name: payload.name });
+    case "plan-changed":
+      return planChangedEmail({
+        name: payload.name,
+        previousPlan: payload.previousPlan,
+        newPlan: payload.newPlan,
+      });
+  }
+}
+
+const SUPPORTED_TEMPLATES: EmailTemplate[] = ["welcome", "plan-changed"];
+
+export async function POST(req: Request): Promise<NextResponse> {
+  // Rate limiting
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success: allowed, remaining, reset } = limiter.check(ip);
+
+  const rateLimitHeaders = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+  };
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...rateLimitHeaders,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  // Authentication
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: rateLimitHeaders },
+    );
+  }
+
+  const user = await currentUser();
+  if (!user?.primaryEmailAddress?.emailAddress) {
+    return NextResponse.json(
+      { error: "No email address found for user" },
+      { status: 400, headers: rateLimitHeaders },
+    );
+  }
+
+  // Request validation
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Invalid JSON body",
+        supported_templates: SUPPORTED_TEMPLATES,
+      },
+      { status: 400, headers: rateLimitHeaders },
+    );
+  }
+
+  if (!isValidPayload(body)) {
+    return NextResponse.json(
+      {
+        error: "Invalid payload. Provide a valid template and its required fields.",
+        supported_templates: SUPPORTED_TEMPLATES,
+      },
+      { status: 400, headers: rateLimitHeaders },
+    );
+  }
+
+  // Send email
+  const { subject, html } = buildEmail(body);
+  const result = await sendEmail({
+    to: user.primaryEmailAddress.emailAddress,
+    subject,
+    html,
+  });
+
+  if (!result.success) {
+    return NextResponse.json(
+      { error: "Failed to send email", details: result.error },
+      { status: 502, headers: rateLimitHeaders },
+    );
+  }
+
+  return NextResponse.json(
+    { status: "sent", id: result.id },
+    { status: 200, headers: rateLimitHeaders },
+  );
+}
+```
+
+**Usage**:
+```typescript
+// Client-side
+const response = await fetch("/api/email", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    template: "welcome",
+    name: "John Doe",
+  }),
+});
+```
+
+## Chat API Route
+
+AI chat endpoint with streaming, authentication, and advanced rate limiting (`src/app/api/chat/route.ts`):
+
+```typescript
+import { auth, clerkClient } from "@clerk/nextjs/server";
+import { convertToModelMessages, stepCountIs, streamText } from "ai";
+import type { UIMessage } from "ai";
+import { NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit";
+import { chatConfig } from "@/lib/ai/chat-config";
+
+export const maxDuration = 30;
+
+const limiter = rateLimit({
+  interval: chatConfig.rateLimit.intervalMs,
+  limit: chatConfig.rateLimit.maxRequests,
+});
+
+function isValidBody(body: unknown): body is { messages: UIMessage[] } {
+  if (typeof body !== "object" || body === null) return false;
+  const payload = body as Record<string, unknown>;
+  return Array.isArray(payload.messages);
+}
+
+export async function POST(req: Request): Promise<Response> {
+  // Authentication
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Rate limiting with composite key
+  const forwardedFor = req.headers.get("x-forwarded-for") ?? "unknown";
+  const ip = forwardedFor.split(",")[0]?.trim() || "unknown";
+  const { success, remaining, reset } = limiter.check(`${userId}:${ip}`);
+  
+  const rateLimitHeaders = {
+    "X-RateLimit-Remaining": String(remaining),
+    "X-RateLimit-Reset": String(reset),
+    "X-AI-Model": chatConfig.model,
+  };
+
+  if (!success) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          ...rateLimitHeaders,
+          "Retry-After": String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  // Environment validation
+  if (!process.env.AI_GATEWAY_API_KEY) {
+    return NextResponse.json(
+      { error: "Missing AI_GATEWAY_API_KEY" },
+      { status: 500, headers: rateLimitHeaders },
+    );
+  }
+
+  // Request parsing
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: 400, headers: rateLimitHeaders },
+    );
+  }
+
+  if (!isValidBody(body)) {
+    return NextResponse.json(
+      { error: "Invalid payload. Expected { messages: UIMessage[] }." },
+      { status: 400, headers: rateLimitHeaders },
+    );
+  }
+
+  // Stream AI response
+  const result = streamText({
+    model: chatConfig.model,
+    system: chatConfig.systemPrompt,
+    stopWhen: stepCountIs(chatConfig.maxSteps),
+    messages: await convertToModelMessages(body.messages),
+  });
+
+  const response = result.toUIMessageStreamResponse();
+  for (const [key, value] of Object.entries(rateLimitHeaders)) {
+    response.headers.set(key, value);
+  }
+
+  return response;
+}
+```
+
+Key features:
+- **Streaming responses** with Vercel AI SDK
+- **Composite rate limiting** (user + IP)
+- **Custom headers** for model metadata
+- **Environment validation**
+- **Configurable timeout** (`maxDuration`)
+
+## Common Patterns
+
+### Request Validation
+
+```typescript
+function isValidRequest(body: unknown): body is { email: string; name: string } {
+  if (typeof body !== "object" || body === null) return false;
+  const payload = body as Record<string, unknown>;
+  return (
+    typeof payload.email === "string" &&
+    typeof payload.name === "string" &&
+    payload.email.length > 0 &&
+    payload.name.length > 0
+  );
+}
+
+export async function POST(req: Request) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON" },
+      { status: 400 },
+    );
+  }
+
+  if (!isValidRequest(body)) {
+    return NextResponse.json(
+      { error: "Missing required fields" },
+      { status: 400 },
+    );
+  }
+
+  // TypeScript now knows body.email and body.name exist
+}
+```
+
+### Error Handling
+
+```typescript
+export async function POST(req: Request) {
+  try {
+    const result = await someAsyncOperation();
+    return NextResponse.json({ success: true, data: result });
+  } catch (error) {
+    console.error("API Error:", error);
+    return NextResponse.json(
+      { 
+        error: "Internal server error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+}
+```
+
+### Custom Headers
+
+```typescript
+export async function GET(req: Request) {
+  return NextResponse.json(
+    { data: "response" },
+    {
+      headers: {
+        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=30",
+        "X-Custom-Header": "value",
+      },
+    },
+  );
+}
+```
+
+### Reading Headers
+
+```typescript
+export async function POST(req: Request) {
+  const authorization = req.headers.get("authorization");
+  const contentType = req.headers.get("content-type");
+  const customHeader = req.headers.get("x-custom-header");
+  
+  // Use headers...
+}
+```
+
+### URL Parameters
+
+```typescript
+// src/app/api/users/[id]/route.ts
+export async function GET(
+  req: Request,
+  { params }: { params: { id: string } },
+) {
+  const userId = params.id;
+  return NextResponse.json({ userId });
+}
+```
+
+### Query Parameters
+
+```typescript
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const page = searchParams.get("page") ?? "1";
+  const limit = searchParams.get("limit") ?? "10";
+  
+  return NextResponse.json({ page, limit });
+}
+```
+
+## Authentication
+
+All authenticated routes use Clerk:
+
+```typescript
+import { auth, currentUser } from "@clerk/nextjs/server";
+
+export async function POST(req: Request) {
+  // Check authentication
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 },
+    );
+  }
+
+  // Get full user data if needed
+  const user = await currentUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: "User not found" },
+      { status: 404 },
+    );
+  }
+
+  // Access user properties
+  const email = user.primaryEmailAddress?.emailAddress;
+  const name = user.firstName;
+  
+  // Process request...
+}
+```
+
+## Rate Limiting
+
+See the [Rate Limiting guide](/guides/rate-limiting) for detailed examples.
+
+```typescript
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 10 });
+
+export async function POST(req: Request) {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success, remaining, reset } = limiter.check(ip);
+  
+  if (!success) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      { status: 429 },
+    );
+  }
+  
+  // Process request...
+}
+```
+
+## Environment Variables
+
+Access environment variables in API routes:
+
+```typescript
+export async function POST(req: Request) {
+  const apiKey = process.env.THIRD_PARTY_API_KEY;
+  
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key not configured" },
+      { status: 500 },
+    );
+  }
+  
+  // Use API key...
+}
+```
+
+## Route Configuration
+
+### Runtime Configuration
+
+```typescript
+// Force Node.js runtime (default is Edge)
+export const runtime = "nodejs";
+
+// Set maximum execution time
+export const maxDuration = 30; // seconds
+
+// Disable static optimization
+export const dynamic = "force-dynamic";
+```
+
+## Best Practices
+
+1. **Always validate input** - Use type guards for request bodies
+2. **Handle errors gracefully** - Return appropriate status codes
+3. **Include rate limiting** - Protect your API from abuse
+4. **Add authentication** - Secure sensitive endpoints
+5. **Return consistent responses** - Use standard JSON structure
+6. **Set proper headers** - Include rate limit and cache headers
+7. **Log errors** - Use proper error logging
+8. **Type everything** - Leverage TypeScript for safety
+9. **Validate environment** - Check required env vars early
+10. **Document your APIs** - Add JSDoc comments

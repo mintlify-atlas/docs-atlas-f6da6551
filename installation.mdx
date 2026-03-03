@@ -1,0 +1,614 @@
+---
+title: "Installation"
+description: "Complete setup guide for Shipr including all required and optional services."
+---
+
+# Installation
+
+This guide covers the complete setup of Shipr, including all required services and optional integrations. For a faster start, see the [Quick Start](/quickstart) guide.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Node.js 18+">
+    Download and install from [nodejs.org](https://nodejs.org)
+
+    Verify installation:
+    ```bash
+    node --version
+    ```
+  </Step>
+
+  <Step title="pnpm package manager">
+    Install pnpm globally:
+    ```bash
+    npm install -g pnpm
+    ```
+
+    Verify installation:
+    ```bash
+    pnpm --version
+    ```
+  </Step>
+
+  <Step title="Git">
+    Ensure Git is installed for cloning the repository:
+    ```bash
+    git --version
+    ```
+  </Step>
+</Steps>
+
+## Initial Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone <repo-url>
+    cd shipr
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    pnpm install
+    ```
+
+    This installs all packages from `package.json` including:
+    - `next` (16.1.6) - Framework
+    - `@clerk/nextjs` - Authentication
+    - `convex` - Database and backend
+    - `@ai-sdk/react` and `ai` - AI functionality
+    - `resend` - Email sending
+    - `@sentry/nextjs` - Error tracking
+    - `posthog-js` - Analytics
+    - UI libraries (shadcn, Tailwind, etc.)
+  </Step>
+
+  <Step title="Create environment file">
+    ```bash
+    cp .env.example .env
+    ```
+  </Step>
+</Steps>
+
+## Configure Clerk (Required)
+
+Clerk handles authentication, user management, and billing plan detection.
+
+<Steps>
+  <Step title="Create a Clerk account">
+    1. Visit [clerk.com](https://clerk.com)
+    2. Sign up for a free account
+    3. Create a new application
+  </Step>
+
+  <Step title="Configure authentication methods">
+    In your Clerk dashboard:
+    - Enable email/password authentication
+    - Optionally enable social providers (Google, GitHub, etc.)
+    - Configure your application name and branding
+  </Step>
+
+  <Step title="Copy API keys">
+    From your Clerk dashboard, add these to `.env`:
+
+    ```bash
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+    CLERK_SECRET_KEY=sk_test_...
+    ```
+  </Step>
+
+  <Step title="Set JWT issuer domain">
+    Find your JWT issuer domain in Clerk dashboard under "API Keys":
+
+    ```bash
+    CLERK_JWT_ISSUER_DOMAIN=https://...clerk.accounts.dev
+    ```
+
+    <Warning>
+      This must match exactly what Clerk provides, including the `https://` protocol.
+    </Warning>
+  </Step>
+
+  <Step title="Configure redirect URLs">
+    These are already set in `.env.example`:
+
+    ```bash
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+    ```
+
+    You can customize these URLs if needed, but the defaults work out of the box.
+  </Step>
+
+  <Step title="(Optional) Enable Clerk Billing">
+    If you want to use plan gating (Free/Pro):
+    1. Enable Clerk Billing in your dashboard
+    2. Configure your plans
+    3. The `useUserPlan` hook will automatically detect the user's plan
+  </Step>
+</Steps>
+
+## Configure Convex (Required)
+
+Convex is your realtime database and backend.
+
+<Steps>
+  <Step title="Create a Convex account">
+    1. Go to [convex.dev](https://convex.dev)
+    2. Sign up with GitHub (recommended) or email
+    3. Create a new project
+  </Step>
+
+  <Step title="Initialize Convex">
+    Run the Convex development server:
+
+    ```bash
+    npx convex dev
+    ```
+
+    This will:
+    - Prompt you to log in if needed
+    - Push your schema from `convex/schema.ts`
+    - Generate your deployment URL
+    - Start watching for changes
+
+    <Info>
+      Keep this terminal window open during development. Convex runs alongside Next.js.
+    </Info>
+  </Step>
+
+  <Step title="Copy deployment URL">
+    After running `npx convex dev`, copy the URL to `.env`:
+
+    ```bash
+    NEXT_PUBLIC_CONVEX_URL=https://...convex.cloud
+    ```
+  </Step>
+
+  <Step title="Configure Clerk authentication">
+    In the [Convex dashboard](https://dashboard.convex.dev):
+    1. Select your project
+    2. Go to Settings → Authentication
+    3. Add Clerk as an authentication provider
+    4. Enter your `CLERK_JWT_ISSUER_DOMAIN` value
+
+    This allows Convex to verify Clerk JWTs.
+  </Step>
+</Steps>
+
+## Set Site URL (Required)
+
+The site URL is used for metadata, canonical URLs, sitemaps, and OG images.
+
+```bash
+# For local development
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# For production (update before deploying)
+NEXT_PUBLIC_SITE_URL=https://yourdomain.com
+```
+
+## Configure Resend (Required for Email)
+
+Resend handles transactional emails like welcome messages and plan change notifications.
+
+<Steps>
+  <Step title="Create a Resend account">
+    1. Visit [resend.com](https://resend.com)
+    2. Sign up for a free account
+    3. You get 100 emails/day on the free tier
+  </Step>
+
+  <Step title="Get your API key">
+    From the Resend dashboard:
+    1. Navigate to API Keys
+    2. Create a new API key
+    3. Copy it to `.env`:
+
+    ```bash
+    RESEND_API_KEY=re_...
+    ```
+  </Step>
+
+  <Step title="Configure sender email">
+    For local development/testing:
+    ```bash
+    RESEND_FROM_EMAIL=onboarding@resend.dev
+    ```
+
+    For production with a verified domain:
+    ```bash
+    RESEND_FROM_EMAIL=hello@yourdomain.com
+    ```
+
+    <Note>
+      Resend's sandbox sender works for testing, but you'll need to verify your domain for production.
+    </Note>
+  </Step>
+
+  <Step title="(Optional) Verify your domain">
+    For production:
+    1. In Resend dashboard, go to Domains
+    2. Add your domain
+    3. Add the DNS records Resend provides
+    4. Wait for verification (usually a few minutes)
+  </Step>
+</Steps>
+
+## Configure AI Chat (Optional)
+
+The AI chat feature requires Vercel AI Gateway.
+
+<Steps>
+  <Step title="Get AI Gateway API key">
+    1. Visit [vercel.com](https://vercel.com)
+    2. Create or select a project
+    3. Navigate to AI Gateway settings
+    4. Generate an API key
+
+    Add to `.env`:
+    ```bash
+    AI_GATEWAY_API_KEY=vck_...
+    ```
+  </Step>
+
+  <Step title="Configure AI settings">
+    Customize the AI chat behavior:
+
+    ```bash
+    # Model to use (default: openai/gpt-4.1-mini)
+    AI_CHAT_MODEL=openai/gpt-4.1-mini
+
+    # System prompt
+    AI_CHAT_SYSTEM_PROMPT=You are Shipr's AI assistant helping builders ship SaaS faster.
+
+    # Enabled tools (comma-separated)
+    AI_CHAT_TOOLS=getCurrentDateTime,calculate
+
+    # Max model steps per response
+    AI_CHAT_MAX_STEPS=5
+
+    # Rate limiting
+    AI_CHAT_RATE_LIMIT_MAX_REQUESTS=20
+    AI_CHAT_RATE_LIMIT_WINDOW_MS=60000
+    ```
+  </Step>
+
+  <Step title="Configure chat history">
+    Chat history is stored in Convex:
+
+    ```bash
+    # Enable/disable chat history
+    AI_CHAT_HISTORY_ENABLED=true
+
+    # Max characters per message
+    AI_CHAT_HISTORY_MAX_MESSAGE_LENGTH=8000
+
+    # Max messages per thread
+    AI_CHAT_HISTORY_MAX_MESSAGES_PER_THREAD=120
+
+    # Max threads per user
+    AI_CHAT_HISTORY_MAX_THREADS=50
+
+    # Max title length
+    AI_CHAT_HISTORY_THREAD_TITLE_MAX_LENGTH=80
+
+    # Query limit
+    AI_CHAT_HISTORY_QUERY_LIMIT=200
+    ```
+  </Step>
+
+  <Step title="Configure lifetime message limits">
+    Prevent abuse with per-user message caps:
+
+    ```bash
+    # Enable lifetime cap (default: true for boilerplate protection)
+    AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT=true
+
+    # Max messages per user account (default: 1)
+    AI_CHAT_LIFETIME_MESSAGE_LIMIT=1
+    ```
+
+    <Tip>
+      Set `AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT=false` to disable this limit for your production app.
+    </Tip>
+  </Step>
+</Steps>
+
+## Configure PostHog (Optional)
+
+PostHog provides product analytics with a reverse proxy to bypass ad blockers.
+
+<Steps>
+  <Step title="Create a PostHog project">
+    1. Visit [posthog.com](https://posthog.com)
+    2. Sign up for a free account
+    3. Create a new project
+  </Step>
+
+  <Step title="Copy your credentials">
+    From your PostHog project settings:
+
+    ```bash
+    NEXT_PUBLIC_POSTHOG_KEY=phc_...
+    NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+    ```
+
+    <Info>
+      Shipr is configured to reverse-proxy PostHog requests through Next.js rewrites (see `next.config.ts`), which helps bypass ad blockers.
+    </Info>
+  </Step>
+</Steps>
+
+## Configure Sentry (Optional)
+
+Sentry provides error tracking and performance monitoring.
+
+<Steps>
+  <Step title="Create a Sentry project">
+    1. Go to [sentry.io](https://sentry.io)
+    2. Create an account and organization
+    3. Create a new Next.js project
+  </Step>
+
+  <Step title="Add Sentry credentials">
+    ```bash
+    # Auth token for uploading source maps
+    SENTRY_AUTH_TOKEN=sntrys_...
+
+    # Your Sentry DSN
+    NEXT_PUBLIC_SENTRY_DSN=https://...@...ingest.us.sentry.io/...
+    ```
+  </Step>
+
+  <Step title="Source maps">
+    Source maps are automatically uploaded during `pnpm build` via the `@sentry/nextjs` plugin.
+
+    <Note>
+      Source maps help you debug production errors with readable stack traces.
+    </Note>
+  </Step>
+</Steps>
+
+## Configure File Upload Rate Limiting (Optional)
+
+Control image upload limits per user:
+
+```bash
+# Max uploads per user in the time window
+FILE_IMAGE_UPLOAD_RATE_LIMIT_MAX_UPLOADS=10
+
+# Time window in milliseconds (60000 = 1 minute)
+FILE_IMAGE_UPLOAD_RATE_LIMIT_WINDOW_MS=60000
+```
+
+<Tip>
+  Set either value to `0` to disable rate limiting for image uploads.
+</Tip>
+
+## Complete .env Example
+
+Here's what your `.env` should look like with all required services configured:
+
+<CodeGroup>
+
+```bash .env (Development)
+# Site
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# Clerk Authentication
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+CLERK_JWT_ISSUER_DOMAIN=https://...clerk.accounts.dev
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+
+# Convex Database
+NEXT_PUBLIC_CONVEX_URL=https://...convex.cloud
+
+# Resend Email
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=onboarding@resend.dev
+
+# Vercel AI Gateway (optional)
+AI_GATEWAY_API_KEY=vck_...
+
+# PostHog Analytics (optional)
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+
+# Sentry Error Tracking (optional)
+SENTRY_AUTH_TOKEN=sntrys_...
+NEXT_PUBLIC_SENTRY_DSN=https://...@...ingest.us.sentry.io/...
+```
+
+```bash .env (Production)
+# Site
+NEXT_PUBLIC_SITE_URL=https://yourdomain.com
+
+# Clerk Authentication
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
+CLERK_JWT_ISSUER_DOMAIN=https://...clerk.accounts.dev
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+
+# Convex Database
+NEXT_PUBLIC_CONVEX_URL=https://...convex.cloud
+
+# Resend Email
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=hello@yourdomain.com
+
+# Vercel AI Gateway
+AI_GATEWAY_API_KEY=vck_...
+AI_CHAT_ENFORCE_LIFETIME_MESSAGE_LIMIT=false
+
+# PostHog Analytics
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+
+# Sentry Error Tracking
+SENTRY_AUTH_TOKEN=sntrys_...
+NEXT_PUBLIC_SENTRY_DSN=https://...@...ingest.us.sentry.io/...
+```
+
+</CodeGroup>
+
+## Start Development
+
+With all services configured, you're ready to run Shipr:
+
+<Steps>
+  <Step title="Start Convex">
+    In one terminal:
+    ```bash
+    npx convex dev
+    ```
+  </Step>
+
+  <Step title="Start Next.js">
+    In another terminal:
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+
+  <Step title="Open your browser">
+    Visit [http://localhost:3000](http://localhost:3000)
+  </Step>
+</Steps>
+
+## Verify Setup
+
+<Steps>
+  <Step title="Check authentication">
+    1. Click "Sign Up" in the header
+    2. Create a test account
+    3. Complete the onboarding flow
+    4. Verify you can access the dashboard
+  </Step>
+
+  <Step title="Check Convex sync">
+    1. Open the [Convex dashboard](https://dashboard.convex.dev)
+    2. Navigate to your project's data
+    3. Check the `users` table - you should see your test user
+  </Step>
+
+  <Step title="Check email (if configured)">
+    Test the email endpoint:
+    ```bash
+    # In the dashboard, navigate to a page that triggers a welcome email
+    # Or test via the API route directly
+    ```
+  </Step>
+
+  <Step title="Check AI chat (if configured)">
+    1. Navigate to `/dashboard/chat`
+    2. Send a test message
+    3. Verify you get a response from the AI
+  </Step>
+</Steps>
+
+## Database Schema
+
+Shipr's Convex schema (`convex/schema.ts`) includes:
+
+### Users Table
+
+| Field                 | Type       | Description                                 |
+| --------------------- | ---------- | ------------------------------------------- |
+| `clerkId`             | `string`   | Clerk user ID (indexed)                     |
+| `email`               | `string`   | Primary email address                       |
+| `name`                | `string?`  | Full name                                   |
+| `imageUrl`            | `string?`  | Profile image URL                           |
+| `plan`                | `string?`  | Billing plan: `"free"` or `"pro"`          |
+| `onboardingCompleted` | `boolean?` | Whether user finished onboarding            |
+| `onboardingStep`      | `string?`  | Current step: `"welcome"`, `"profile"`, etc. |
+
+### Files Table
+
+| Field       | Type                 | Description                      |
+| ----------- | -------------------- | -------------------------------- |
+| `storageId` | `id("_storage")`     | Convex storage reference         |
+| `userId`    | `id("users")`        | Owning user                      |
+| `fileName`  | `string`             | Original filename (sanitized)    |
+| `mimeType`  | `string`             | MIME type (e.g., `"image/png"`)  |
+| `size`      | `number`             | File size in bytes               |
+
+### Chat Tables
+
+**chatThreads:**
+- `userId` - Owner of the thread
+- `title` - Auto-generated thread title
+- `lastMessageAt` - Timestamp for sorting
+
+**chatMessages:**
+- `userId` - Message owner
+- `threadId` - Parent thread
+- `role` - `"user"` or `"assistant"`
+- `content` - Message text
+
+<Note>
+  All tables automatically include `_id` and `_creationTime` fields from Convex.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="building" href="/guides/architecture">
+    Learn how Shipr's components work together
+  </Card>
+  <Card title="Authentication" icon="shield" href="/features/authentication">
+    Deep dive into Clerk and user sync
+  </Card>
+  <Card title="AI Chat" icon="message" href="/features/ai-chat">
+    Configure and extend the AI chat feature
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/overview">
+    Deploy to production on Vercel
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Module not found errors
+
+```bash
+# Clear node_modules and reinstall
+rm -rf node_modules
+pnpm install
+```
+
+### Convex schema errors
+
+```bash
+# Push schema again
+npx convex dev --once
+```
+
+### Environment variables not loading
+
+1. Verify `.env` file exists in the root directory
+2. Restart both `npx convex dev` and `pnpm dev`
+3. Check for typos in variable names (they're case-sensitive)
+
+### Clerk/Convex authentication mismatch
+
+1. Verify `CLERK_JWT_ISSUER_DOMAIN` matches in:
+   - Your `.env` file
+   - Convex dashboard authentication settings
+2. Ensure it includes `https://` protocol
+3. Restart all servers after changing
+
+### Port conflicts
+
+```bash
+# Use a different port
+pnpm dev -- -p 3001
+
+# Update your site URL
+NEXT_PUBLIC_SITE_URL=http://localhost:3001
+```

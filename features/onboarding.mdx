@@ -1,0 +1,323 @@
+---
+title: "Onboarding"
+description: "Multi-step onboarding flow with progress tracking and required completion"
+---
+
+Shipr includes a required multi-step onboarding flow for all new users.
+
+## Features
+
+- **Multi-step wizard** - Welcome, profile review, and preferences
+- **Progress tracking** - Visual progress bar and step indicators
+- **Persistent state** - Current step stored in Convex
+- **Required completion** - Users redirected until onboarding is done
+- **Type-safe steps** - TypeScript validation for step transitions
+
+## Onboarding Steps
+
+```typescript
+type OnboardingStep = "welcome" | "profile" | "preferences" | "complete";
+```
+
+### 1. Welcome
+
+Introduces the onboarding flow and lists what users will complete.
+
+### 2. Profile
+
+Reviews user information synced from Clerk (name and email).
+
+### 3. Preferences
+
+Allows users to:
+- Select their primary goal (MVP, production scale, or internal tools)
+- Confirm they understand the boilerplate is a foundation
+
+### 4. Complete
+
+Marks onboarding as finished and redirects to dashboard.
+
+## Onboarding Hook
+
+The `useOnboarding` hook manages onboarding state and redirects:
+
+```typescript ~/workspace/source/src/hooks/use-onboarding.ts
+import { useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@convex/_generated/api";
+
+export function useOnboarding() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const onboardingStatus = useQuery(api.users.getOnboardingStatus);
+
+  useEffect(() => {
+    if (!onboardingStatus) return;
+
+    const isOnOnboardingPage = pathname === "/onboarding";
+    const shouldRedirectToOnboarding =
+      !onboardingStatus.completed && !isOnOnboardingPage;
+    const shouldRedirectToDashboard =
+      onboardingStatus.completed && isOnOnboardingPage;
+
+    if (shouldRedirectToOnboarding) {
+      router.push("/onboarding");
+    } else if (shouldRedirectToDashboard) {
+      router.push("/dashboard");
+    }
+  }, [onboardingStatus, pathname, router]);
+
+  return {
+    completed: onboardingStatus?.completed ?? false,
+    currentStep: onboardingStatus?.currentStep ?? "welcome",
+    isLoading: onboardingStatus === undefined,
+  };
+}
+```
+
+## Convex Schema
+
+Onboarding state is stored in the `users` table:
+
+```typescript ~/workspace/source/convex/schema.ts
+users: defineTable({
+  clerkId: v.string(),
+  email: v.string(),
+  name: v.optional(v.string()),
+  imageUrl: v.optional(v.string()),
+  plan: v.optional(v.string()),
+  onboardingCompleted: v.optional(v.boolean()),
+  onboardingStep: v.optional(v.string()),
+}).index("by_clerk_id", ["clerkId"])
+```
+
+| Field                 | Type       | Description                           |
+| --------------------- | ---------- | ------------------------------------- |
+| `onboardingCompleted` | `boolean?` | Whether onboarding is complete        |
+| `onboardingStep`      | `string?`  | Current step: "welcome" \| "profile" \| "preferences" \| "complete" |
+
+## Convex Mutations
+
+### Get Onboarding Status
+
+```typescript ~/workspace/source/convex/users.ts
+export const getOnboardingStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    return {
+      completed: user?.onboardingCompleted ?? false,
+      currentStep: (user?.onboardingStep ?? "welcome") as OnboardingStep,
+    };
+  },
+});
+```
+
+### Update Onboarding Step
+
+```typescript ~/workspace/source/convex/users.ts
+export const updateOnboardingStep = mutation({
+  args: {
+    step: v.union(
+      v.literal("welcome"),
+      v.literal("profile"),
+      v.literal("preferences"),
+      v.literal("complete"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Unauthorized: authentication required");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      onboardingStep: args.step,
+    });
+  },
+});
+```
+
+### Complete Onboarding
+
+```typescript ~/workspace/source/convex/users.ts
+export const completeOnboarding = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Unauthorized: authentication required");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      onboardingCompleted: true,
+      onboardingStep: "complete",
+    });
+  },
+});
+```
+
+### Reset Onboarding
+
+Useful for testing or allowing users to re-onboard:
+
+```typescript ~/workspace/source/convex/users.ts
+export const resetOnboarding = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Unauthorized: authentication required");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      onboardingCompleted: false,
+      onboardingStep: "welcome",
+    });
+  },
+});
+```
+
+## Onboarding Page
+
+The onboarding UI manages step navigation and validation:
+
+```typescript ~/workspace/source/src/app/(dashboard)/onboarding/page.tsx
+const [currentStep, setCurrentStep] = useState<Step>("welcome");
+const [selectedGoal, setSelectedGoal] = useState<BuilderGoal | null>(null);
+const [confirmedChecklist, setConfirmedChecklist] = useState(false);
+
+async function handleNext() {
+  const nextIndex = currentStepIndex + 1;
+  if (nextIndex < ONBOARDING_STEPS.length) {
+    const nextStep = ONBOARDING_STEPS[nextIndex];
+    await updateStep({ step: nextStep });
+    setCurrentStep(nextStep);
+  }
+}
+
+async function handleComplete() {
+  await completeOnboarding();
+  toast.success("Onboarding completed");
+  router.push("/dashboard");
+}
+```
+
+## Builder Goals
+
+Users can select their primary goal during onboarding:
+
+```typescript ~/workspace/source/src/app/(dashboard)/onboarding/page.tsx
+type BuilderGoal = "mvp" | "production" | "internal-tools";
+
+const BUILDER_GOALS = [
+  {
+    value: "mvp",
+    title: "Launch MVP",
+    description: "Ship your first customer-ready version quickly.",
+  },
+  {
+    value: "production",
+    title: "Scale Production",
+    description: "Harden flows for growth, billing, and reliability.",
+  },
+  {
+    value: "internal-tools",
+    title: "Internal SaaS Tools",
+    description: "Build secure back-office tools for your team.",
+  },
+];
+```
+
+## Progress Tracking
+
+Visual progress is calculated based on current step:
+
+```typescript ~/workspace/source/src/app/(dashboard)/onboarding/page.tsx
+const currentStepIndex = ONBOARDING_STEPS.indexOf(
+  (currentStep === "complete" ? "preferences" : currentStep) as ActiveStep,
+);
+const progress = ((currentStepIndex + 1) / ONBOARDING_STEPS.length) * 100;
+
+return (
+  <div className="space-y-2">
+    <div className="flex items-center justify-between text-sm">
+      <span>Step {currentStepIndex + 1} of {ONBOARDING_STEPS.length}</span>
+      <span>{Math.round(progress)}%</span>
+    </div>
+    <Progress value={progress} className="h-2" />
+  </div>
+);
+```
+
+## Completion Requirements
+
+The final step requires users to:
+1. Select a builder goal (optional, UI shows selection)
+2. Confirm they understand the boilerplate is a foundation (required)
+
+```typescript
+<Button
+  onClick={handleComplete}
+  disabled={isSubmitting || !confirmedChecklist}
+>
+  {isSubmitting ? "Finishing..." : "Get Started"}
+</Button>
+```
+
+<Warning>
+Users cannot complete onboarding without checking the confirmation checkbox.
+</Warning>
+
+## Testing Onboarding
+
+Reset onboarding for the current user:
+
+```typescript
+import { useMutation } from "convex/react";
+import { api } from "@convex/_generated/api";
+
+const resetOnboarding = useMutation(api.users.resetOnboarding);
+
+// Reset and redirect to onboarding
+await resetOnboarding();
+router.push("/onboarding");
+```
+
+## Customizing Steps
+
+To add or modify onboarding steps:
+
+1. Update the `OnboardingStep` type in `convex/users.ts`
+2. Add the step to `ONBOARDING_STEPS` array in `onboarding/page.tsx`
+3. Add a case to the `renderStep()` function
+4. Update step validation in `updateOnboardingStep` mutation

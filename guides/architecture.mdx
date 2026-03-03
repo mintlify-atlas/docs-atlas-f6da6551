@@ -1,0 +1,396 @@
+---
+title: Architecture
+description: Understanding Shipr's technical architecture, tech stack, and design decisions
+---
+
+Shipr is built as a production-ready Next.js SaaS boilerplate with a modern, scalable architecture. This guide covers the core technologies, architectural patterns, and how different pieces fit together.
+
+## Tech Stack Overview
+
+Shipr combines best-in-class tools to provide a complete SaaS foundation:
+
+| Layer          | Technology                 | Purpose                          |
+| -------------- | -------------------------- | -------------------------------- |
+| Framework      | Next.js 15 (App Router)    | React framework with SSR/RSC     |
+| Auth           | Clerk                      | User authentication & management |
+| Database       | Convex                     | Realtime backend & database      |
+| Styling        | Tailwind CSS 4             | Utility-first CSS framework      |
+| UI Components  | shadcn/ui + Base UI        | Accessible component library     |
+| Analytics      | PostHog + Vercel Analytics | Product & web analytics          |
+| Error Tracking | Sentry                     | Error monitoring & debugging     |
+| Payments       | Clerk Billing              | Subscription management          |
+| Email          | Resend                     | Transactional email delivery     |
+| Fonts          | Geist Sans/Mono/Pixel      | Typography system                |
+| Deployment     | Vercel                     | Hosting & edge deployment        |
+
+## Provider Stack
+
+Providers wrap the application in a specific order to ensure proper initialization and context availability. The stack is defined in `src/app/layout.tsx:106-149`:
+
+```tsx
+<ThemeProvider>              // next-themes (light/dark/system)
+  <PostHogProvider>          // Analytics client initialization
+    <ClerkProviderWrapper>   // Auth provider (adapts to theme)
+      <PostHogIdentify />    // Links Clerk user to PostHog
+      <PostHogPageview />    // Tracks route changes
+      <TooltipProvider>      // UI tooltips (shadcn/ui)
+        <ConvexClientProvider> // Realtime database with Clerk auth
+          {children}
+        </ConvexClientProvider>
+      </TooltipProvider>
+    </ClerkProviderWrapper>
+  </PostHogProvider>
+  <Toaster />               // Toast notifications
+</ThemeProvider>
+<Analytics />              // Vercel Analytics
+<SpeedInsights />          // Vercel Speed Insights
+```
+
+### Why This Order Matters
+
+1. **ThemeProvider** comes first so all child components can access theme state
+2. **PostHogProvider** initializes before Clerk to ensure analytics are ready
+3. **ClerkProviderWrapper** provides authentication context
+4. **PostHogIdentify** runs after Clerk to link user identity
+5. **ConvexClientProvider** uses Clerk's `useAuth` hook for authenticated queries
+
+## Authentication Flow
+
+Shipr uses Clerk as the single source of truth for authentication, with Convex syncing user data for database operations.
+
+### Clerk → Convex Integration
+
+The integration happens in two places:
+
+**1. Provider Setup** (`src/lib/convex-client-provider.tsx:16-22`):
+
+```tsx
+import { ConvexProviderWithClerk } from "convex/react-clerk";
+import { useAuth } from "@clerk/nextjs";
+
+export function ConvexClientProvider({ children }) {
+  return (
+    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+      {children}
+    </ConvexProviderWithClerk>
+  );
+}
+```
+
+**2. JWT Configuration** (`convex/auth.config.ts:1-15`):
+
+```ts
+import { AuthConfig } from "convex/server";
+
+export default {
+  providers: [
+    {
+      domain: process.env.CLERK_JWT_ISSUER_DOMAIN,
+      applicationID: "convex",
+    },
+  ],
+} satisfies AuthConfig;
+```
+
+This configuration tells Convex to verify JWTs issued by Clerk, enabling `ctx.auth.getUserIdentity()` in Convex functions.
+
+### User Sync Mechanism
+
+The `useSyncUser` hook (`src/hooks/use-sync-user.ts:18-51`) keeps Clerk and Convex in sync:
+
+```tsx
+export function useSyncUser() {
+  const { user, isLoaded } = useUser();        // Clerk user
+  const { has } = useAuth();                   // Clerk auth
+  const plan = has({ plan: "pro" }) ? "pro" : "free";
+  
+  const createOrUpdateUser = useMutation(api.users.createOrUpdateUser);
+  const existingUser = useQuery(api.users.getUserByClerkId, ...);
+
+  useEffect(() => {
+    // Only sync if data changed
+    if (
+      existingUser.email !== user.primaryEmailAddress?.emailAddress ||
+      existingUser.name !== user.fullName ||
+      existingUser.imageUrl !== user.imageUrl ||
+      existingUser.plan !== plan
+    ) {
+      createOrUpdateUser({ clerkId, email, name, imageUrl, plan });
+    }
+  }, [user, plan, existingUser]);
+
+  return { user, convexUser: existingUser, isLoaded };
+}
+```
+
+**Data Flow:**
+
+```
+┌─────────────┐
+│    Clerk    │  (Source of truth for auth)
+│  (Session)  │
+└──────┬──────┘
+       │
+       │ useSyncUser hook
+       │ (client-side)
+       ↓
+┌──────────────────────┐
+│ createOrUpdateUser   │  (Convex mutation)
+│   (convex/users.ts)  │
+└──────────┬───────────┘
+           │
+           ↓
+    ┌──────────────┐
+    │ Convex Users │  (Database record)
+    │    Table     │
+    └──────────────┘
+```
+
+### Plan Detection
+
+Billing plans are managed through Clerk Billing and detected via the `useUserPlan` hook (`src/hooks/use-user-plan.ts:24-42`):
+
+```tsx
+export function useUserPlan() {
+  const { has, isLoaded } = useAuth();
+  
+  const isPro = isLoaded ? (has?.({ plan: "pro" }) ?? false) : false;
+  const plan = isPro ? "pro" : "free";
+  
+  return { plan, isLoading: !isLoaded, isPro, isFree: !isPro };
+}
+```
+
+No separate billing table is needed — plan status is derived from Clerk's `has()` check and synced to Convex for server-side access.
+
+## Database Schema
+
+Convex schema is defined in `convex/schema.ts:4-45` with four main tables:
+
+### Users Table
+
+```ts
+users: defineTable({
+  clerkId: v.string(),                    // Clerk user ID
+  email: v.string(),                      // Primary email
+  name: v.optional(v.string()),           // Full name
+  imageUrl: v.optional(v.string()),       // Avatar URL
+  plan: v.optional(v.string()),           // "free" | "pro"
+  onboardingCompleted: v.optional(v.boolean()),
+  onboardingStep: v.optional(v.string()), // "welcome" | "profile" | ...
+}).index("by_clerk_id", ["clerkId"])
+```
+
+Convex automatically adds `_id` and `_creationTime` to every document.
+
+### Files Table
+
+```ts
+files: defineTable({
+  storageId: v.id("_storage"),   // Convex storage reference
+  userId: v.id("users"),          // Owner reference
+  fileName: v.string(),           // Sanitized filename
+  mimeType: v.string(),           // MIME type
+  size: v.number(),               // Bytes
+})
+  .index("by_user_id", ["userId"])
+  .index("by_storage_id", ["storageId"])
+```
+
+### Chat Tables
+
+```ts
+chatThreads: defineTable({
+  userId: v.id("users"),
+  title: v.string(),
+  lastMessageAt: v.number(),
+})
+  .index("by_user_id", ["userId"])
+  .index("by_user_id_last_message", ["userId", "lastMessageAt"])
+
+chatMessages: defineTable({
+  userId: v.id("users"),
+  threadId: v.id("chatThreads"),
+  role: v.union(v.literal("user"), v.literal("assistant")),
+  content: v.string(),
+})
+  .index("by_user_id", ["userId"])
+  .index("by_thread_id", ["threadId"])
+```
+
+## API Routes
+
+Shipr includes several API routes in `src/app/api/`:
+
+### Health Check
+
+**Endpoint:** `GET /api/health`  
+**Location:** `src/app/api/health/route.ts`  
+**Purpose:** Server health monitoring  
+**Rate Limit:** 30 req/min per IP  
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-03-03T10:30:00.000Z",
+  "uptime": 12345
+}
+```
+
+### Email
+
+**Endpoint:** `POST /api/email`  
+**Location:** `src/app/api/email/route.ts`  
+**Purpose:** Send transactional emails via Resend  
+**Auth:** Clerk authentication required  
+**Rate Limit:** 10 req/min per IP  
+**Templates:** `welcome`, `plan-changed`
+
+### Chat
+
+**Endpoint:** `POST /api/chat`  
+**Location:** `src/app/api/chat/route.ts`  
+**Purpose:** AI chat streaming via Vercel AI SDK  
+**Auth:** Clerk authentication required  
+**Rate Limit:** Configurable (default 20 req/min)  
+**Features:** Tool calling, history persistence
+
+## Rate Limiting
+
+Shipr includes an in-memory sliding window rate limiter at `src/lib/rate-limit.ts`:
+
+```ts
+import { rateLimit } from "@/lib/rate-limit";
+
+const limiter = rateLimit({ interval: 60_000, limit: 10 });
+
+export async function GET(req: Request) {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const { success, remaining, reset } = limiter.check(ip);
+  
+  if (!success) {
+    return Response.json({ error: "Too many requests" }, { status: 429 });
+  }
+  
+  return Response.json({ ok: true });
+}
+```
+
+**Note:** This is in-memory and resets on cold starts. For production multi-instance deployments, swap with Upstash Redis or similar.
+
+## Email System (Resend)
+
+Transactional emails are managed in `src/lib/emails/`:
+
+**Structure:**
+
+```
+src/lib/emails/
+├── send.ts              # sendEmail() helper (lazy Resend SDK)
+├── welcome.ts           # welcomeEmail({ name }) template
+├── plan-changed.ts      # planChangedEmail({ name, previousPlan, newPlan })
+└── index.ts             # Barrel exports
+```
+
+**Usage:**
+
+```ts
+import { sendEmail, welcomeEmail } from "@/lib/emails";
+
+const { subject, html } = welcomeEmail({ name: "Ege" });
+await sendEmail({ to: "ege@example.com", subject, html });
+```
+
+Requires `RESEND_API_KEY` in `.env`. Optionally set `RESEND_FROM_EMAIL` to override the default sender address.
+
+## Blog System
+
+Shipr uses a simple array-based blog system with no CMS or MDX needed:
+
+**Location:** `src/lib/blog.ts`  
+**Structure:** Array of post objects in `BLOG_POSTS`  
+**Features:**
+- Automatic blog index at `/blog`
+- Individual post pages at `/blog/[slug]`
+- Sitemap generation
+- JSON-LD structured data
+
+**Adding a post:**
+
+```ts
+export const BLOG_POSTS = [
+  {
+    slug: "my-new-post",
+    title: "My New Post",
+    excerpt: "Post description",
+    content: "Full HTML content",
+    publishedAt: "2026-03-03",
+    author: { name: "Author Name", image: "/avatar.jpg" },
+  },
+  // ... more posts
+];
+```
+
+## SEO & Structured Data
+
+SEO configuration lives in `src/lib/constants.ts` with structured data components in `src/lib/structured-data.tsx`.
+
+**Root Layout Metadata** (`src/app/layout.tsx:25-94`):
+
+```tsx
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_CONFIG.url),
+  title: {
+    default: METADATA_DEFAULTS.titleDefault,
+    template: METADATA_DEFAULTS.titleTemplate,
+  },
+  description: SITE_CONFIG.description,
+  openGraph: { /* ... */ },
+  twitter: { /* ... */ },
+  robots: { /* ... */ },
+};
+```
+
+**JSON-LD Components:**
+
+```tsx
+<OrganizationJsonLd />  // Organization schema
+<WebSiteJsonLd />       // Website schema
+```
+
+## File Organization
+
+Key architectural files:
+
+| File                                     | Purpose                                 |
+| ---------------------------------------- | --------------------------------------- |
+| `src/app/layout.tsx`                     | Root layout, providers, metadata        |
+| `src/lib/convex-client-provider.tsx`     | Convex + Clerk integration              |
+| `src/hooks/use-sync-user.ts`             | Clerk to Convex user sync               |
+| `src/hooks/use-user-plan.ts`             | Plan gating hook                        |
+| `convex/schema.ts`                       | Database schema definition              |
+| `convex/users.ts`                        | User CRUD mutations/queries             |
+| `convex/auth.config.ts`                  | Clerk JWT config for Convex             |
+| `src/lib/constants.ts`                   | SEO config, routes, structured data     |
+| `src/lib/rate-limit.ts`                  | In-memory rate limiter                  |
+| `src/lib/emails/`                        | Email templates & send helper           |
+| `src/lib/ai/tools/`                      | AI tool registry for chat               |
+| `src/lib/files/config.ts`                | File upload limits/types/formatting     |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Project Structure" icon="folder-tree" href="/guides/project-structure">
+    Explore the directory structure and file organization
+  </Card>
+  <Card title="Routing" icon="route" href="/guides/routing">
+    Learn about route groups and navigation patterns
+  </Card>
+  <Card title="Providers" icon="layer-group" href="/guides/providers">
+    Deep dive into the provider stack configuration
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/quickstart">
+    Set up your development environment
+  </Card>
+</CardGroup>

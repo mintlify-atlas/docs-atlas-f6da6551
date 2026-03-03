@@ -1,0 +1,341 @@
+---
+title: "Billing"
+description: "Plan management with Clerk metadata and upgrade flows"
+---
+
+Shipr uses Clerk's metadata system to manage billing plans without requiring a separate payment processor integration.
+
+## How It Works
+
+1. **Clerk stores plan metadata** - User plans are stored as Clerk session claims
+2. **Plans sync to Convex** - The `useSyncUser` hook syncs plan data to Convex
+3. **Client-side checks** - Use `useUserPlan` hook to check plan status
+4. **Server-side enforcement** - Access plan data via Clerk auth in API routes
+
+## Plans
+
+Two billing plans are available:
+
+- **Free** - Default plan for all new users
+- **Pro** - Premium features and higher limits
+
+## Checking User Plan
+
+Use the `useUserPlan` hook to check plan status:
+
+```typescript ~/workspace/source/src/hooks/use-user-plan.ts
+import { useAuth } from "@clerk/nextjs";
+
+export type Plan = "free" | "pro";
+
+export function useUserPlan(): {
+  plan: Plan;
+  isLoading: boolean;
+  isPro: boolean;
+  isFree: boolean;
+} {
+  const { has, isLoaded } = useAuth();
+
+  const isPro = isLoaded ? (has?.({ plan: "pro" }) ?? false) : false;
+  const isFree = !isPro;
+  const plan: Plan = isPro ? "pro" : "free";
+
+  return {
+    plan,
+    isLoading: !isLoaded,
+    isPro,
+    isFree,
+  };
+}
+```
+
+### Usage Example
+
+```typescript
+import { useUserPlan } from "@/hooks/use-user-plan";
+
+function MyComponent() {
+  const { isPro, isLoading } = useUserPlan();
+
+  if (isLoading) return <Skeleton />;
+  if (isPro) return <ProDashboard />;
+  return <FreeDashboard />;
+}
+```
+
+## Upgrade Button
+
+Show upgrade CTA to free users:
+
+```typescript ~/workspace/source/src/components/billing/upgrade-button.tsx
+import { useUserPlan } from "@/hooks/use-user-plan";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import posthog from "posthog-js";
+
+export function UpgradeButton() {
+  const { isPro, plan } = useUserPlan();
+
+  if (isPro) return null;
+
+  const handleUpgradeClick = () => {
+    posthog.capture("upgrade_button_clicked", {
+      current_plan: plan,
+      location: "dashboard",
+    });
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      render={<Link href="/pricing" />}
+      nativeButton={false}
+      onClick={handleUpgradeClick}
+    >
+      <SparklesIcon />
+      Upgrade to Pro
+    </Button>
+  );
+}
+```
+
+## Plan Sync to Convex
+
+The `useSyncUser` hook automatically syncs plan data from Clerk to Convex:
+
+```typescript ~/workspace/source/src/hooks/use-sync-user.ts
+export function useSyncUser() {
+  const { user, isLoaded } = useUser();
+  const { has } = useAuth();
+  const plan =
+    isLoaded && has ? (has({ plan: "pro" }) ? "pro" : "free") : undefined;
+
+  useEffect(() => {
+    if (!isLoaded || !user) return;
+
+    // Only sync if plan changed
+    if (!existingUser || existingUser.plan !== plan) {
+      createOrUpdateUser({
+        clerkId: user.id,
+        email: user.primaryEmailAddress?.emailAddress ?? "",
+        name: user.fullName ?? undefined,
+        imageUrl: user.imageUrl ?? undefined,
+        plan,
+      });
+    }
+  }, [user, isLoaded, plan, existingUser]);
+
+  return { user, convexUser: existingUser, isLoaded };
+}
+```
+
+## Server-Side Plan Checks
+
+In API routes, check plan via Clerk's `auth()` helper:
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+
+export async function POST(req: Request) {
+  const { userId, has } = await auth();
+  
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const isPro = has?.({ plan: "pro" }) ?? false;
+
+  if (!isPro) {
+    return NextResponse.json(
+      { error: "Pro plan required" },
+      { status: 403 }
+    );
+  }
+
+  // Pro-only logic here
+}
+```
+
+## Convex Plan Storage
+
+User plans are stored in the Convex `users` table:
+
+```typescript ~/workspace/source/convex/schema.ts
+users: defineTable({
+  clerkId: v.string(),
+  email: v.string(),
+  name: v.optional(v.string()),
+  imageUrl: v.optional(v.string()),
+  plan: v.optional(v.string()), // "free" | "pro"
+}).index("by_clerk_id", ["clerkId"])
+```
+
+<Info>
+The plan is synced from Clerk billing metadata via the `useSyncUser` hook. Do not modify it directly in Convex.
+</Info>
+
+## Setting Plan in Clerk
+
+Plans are managed through Clerk's dashboard or API:
+
+### Via Clerk Dashboard
+
+1. Go to Users in Clerk dashboard
+2. Select a user
+3. Go to Metadata tab
+4. Add `plan: "pro"` to public metadata
+
+### Via Clerk API
+
+```typescript
+import { clerkClient } from "@clerk/nextjs/server";
+
+const client = await clerkClient();
+
+await client.users.updateUser(userId, {
+  publicMetadata: {
+    plan: "pro",
+  },
+});
+```
+
+## Plan-Based Feature Gating
+
+### Component-Level Gating
+
+```typescript
+import { useUserPlan } from "@/hooks/use-user-plan";
+
+function ProFeature() {
+  const { isPro } = useUserPlan();
+
+  if (!isPro) {
+    return <UpgradeCTA feature="Advanced Analytics" />;
+  }
+
+  return <AdvancedAnalytics />;
+}
+```
+
+### Route-Level Gating
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+
+export default async function ProOnlyPage() {
+  const { has } = await auth();
+  const isPro = has?.({ plan: "pro" }) ?? false;
+
+  if (!isPro) {
+    redirect("/pricing");
+  }
+
+  return <ProContent />;
+}
+```
+
+### API Route Gating
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+
+export async function POST(req: Request) {
+  const { has } = await auth();
+  const isPro = has?.({ plan: "pro" }) ?? false;
+
+  if (!isPro) {
+    return NextResponse.json(
+      { 
+        error: "This feature requires a Pro plan",
+        upgrade_url: "/pricing"
+      },
+      { status: 403 }
+    );
+  }
+
+  // Pro-only logic
+}
+```
+
+## Plan Change Notifications
+
+Send email when plan changes:
+
+```typescript
+import { sendEmail, planChangedEmail } from "@/lib/emails";
+
+const { subject, html } = planChangedEmail({
+  name: user.fullName,
+  previousPlan: "free",
+  newPlan: "pro",
+});
+
+await sendEmail({
+  to: user.primaryEmailAddress.emailAddress,
+  subject,
+  html,
+});
+```
+
+## Analytics Tracking
+
+Track plan upgrades with PostHog:
+
+```typescript
+import posthog from "posthog-js";
+
+posthog.capture("plan_upgraded", {
+  previous_plan: "free",
+  new_plan: "pro",
+  upgrade_source: "pricing_page",
+});
+```
+
+## Integrating Payment Processors
+
+To integrate Stripe, Paddle, or other payment processors:
+
+1. **Create checkout flow** - Redirect users to payment processor
+2. **Handle webhooks** - Listen for successful payments
+3. **Update Clerk metadata** - Set plan via Clerk API on success
+4. **Plan syncs automatically** - `useSyncUser` updates Convex
+
+### Example Stripe Webhook
+
+```typescript
+import { clerkClient } from "@clerk/nextjs/server";
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+export async function POST(req: Request) {
+  const sig = req.headers.get("stripe-signature")!;
+  const body = await req.text();
+
+  const event = stripe.webhooks.constructEvent(
+    body,
+    sig,
+    process.env.STRIPE_WEBHOOK_SECRET!
+  );
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const userId = session.metadata?.clerk_user_id;
+
+    if (userId) {
+      const client = await clerkClient();
+      await client.users.updateUser(userId, {
+        publicMetadata: { plan: "pro" },
+      });
+    }
+  }
+
+  return new Response(null, { status: 200 });
+}
+```
+
+<Warning>
+Always validate webhooks using the payment processor's signature verification to prevent fraud.
+</Warning>

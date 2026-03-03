@@ -1,0 +1,354 @@
+---
+title: Components
+description: Using shadcn/ui components and creating custom components in Shipr
+---
+
+## Overview
+
+Shipr uses shadcn/ui components built on top of Base UI primitives, providing a comprehensive set of accessible, customizable UI components.
+
+## Component Configuration
+
+The shadcn/ui configuration is defined in `components.json`:
+
+```json
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-nova",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "hugeicons",
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui"
+  }
+}
+```
+
+Key features:
+- **Style**: `base-nova` - Modern shadcn/ui variant
+- **Icons**: Hugeicons library for consistent iconography
+- **RSC**: Full React Server Components support
+- **Path aliases**: Clean imports with `@/` prefix
+
+## UI Components Structure
+
+All UI components are located in `src/components/ui/`. Each component is self-contained and fully customizable.
+
+### Available Components
+
+- **Layout**: Card, Accordion, Collapsible, Breadcrumb
+- **Forms**: Input, Checkbox, Combobox, Field
+- **Feedback**: Alert, Alert Dialog
+- **Navigation**: Dropdown Menu
+- **Data Display**: Avatar, Badge
+- **Buttons**: Button (with variants)
+
+## Button Component
+
+The Button component (`src/components/ui/button.tsx`) uses class-variance-authority for type-safe variants:
+
+```tsx
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
+
+const buttonVariants = cva(
+  "focus-visible:border-ring focus-visible:ring-ring/50 rounded-lg border border-transparent bg-clip-padding text-sm font-medium...",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        outline: "border-border bg-background hover:bg-muted hover:text-foreground",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-muted hover:text-foreground",
+        destructive: "bg-destructive/10 hover:bg-destructive/20 text-destructive",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-8 gap-1.5 px-2.5",
+        xs: "h-6 gap-1 px-2 text-xs",
+        sm: "h-7 gap-1 px-2.5 text-[0.8rem]",
+        lg: "h-9 gap-1.5 px-2.5",
+        icon: "size-8",
+        "icon-xs": "size-6",
+        "icon-sm": "size-7",
+        "icon-lg": "size-9",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  },
+);
+
+function Button({
+  className,
+  variant = "default",
+  size = "default",
+  ...props
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  return (
+    <ButtonPrimitive
+      data-slot="button"
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  );
+}
+
+export { Button, buttonVariants };
+```
+
+### Using Buttons
+
+```tsx
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+
+// Basic button
+<Button>Click me</Button>
+
+// With variants
+<Button variant="outline">Outline</Button>
+<Button variant="ghost">Ghost</Button>
+<Button variant="destructive">Delete</Button>
+
+// Different sizes
+<Button size="xs">Extra Small</Button>
+<Button size="sm">Small</Button>
+<Button size="lg">Large</Button>
+
+// Icon button
+<Button size="icon-xs" variant="outline">
+  <Icon />
+</Button>
+
+// As link
+<Button render={<Link href="/dashboard" />} nativeButton={false}>
+  Go to Dashboard
+</Button>
+```
+
+## Card Component
+
+The Card component (`src/components/ui/card.tsx`) provides a flexible container with multiple sub-components:
+
+```tsx
+import { cn } from "@/lib/utils";
+
+function Card({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+  return (
+    <div
+      data-slot="card"
+      data-size={size}
+      className={cn(
+        "ring-card-ring bg-card text-card-foreground gap-4 overflow-hidden rounded-xl py-4 text-sm ring-1 group/card flex flex-col",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-header"
+      className={cn(
+        "gap-1 rounded-t-xl px-4 group/card-header @container/card-header grid auto-rows-min items-start",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+// CardTitle, CardDescription, CardContent, CardFooter, CardAction...
+```
+
+### Using Cards
+
+```tsx
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+  CardAction,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+
+<Card>
+  <CardHeader>
+    <CardTitle>Card Title</CardTitle>
+    <CardDescription>Card description goes here</CardDescription>
+    <CardAction>
+      <Button size="xs" variant="ghost">Action</Button>
+    </CardAction>
+  </CardHeader>
+  <CardContent>
+    <p>Your card content here</p>
+  </CardContent>
+  <CardFooter>
+    <Button>Learn More</Button>
+  </CardFooter>
+</Card>
+
+// Small variant
+<Card size="sm">
+  <CardContent>Compact card</CardContent>
+</Card>
+```
+
+## Custom Components
+
+Shipr includes several custom components that combine UI primitives:
+
+### Theme Toggle
+
+Location: `src/components/theme-toggle.tsx`
+
+Combines Button and DropdownMenu components for theme switching (see the [Styling guide](/guides/styling) for full implementation).
+
+### Header Component
+
+Location: `src/components/header.tsx`
+
+A responsive navigation header with mobile menu:
+
+```tsx
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/logo";
+
+export const HeroHeader = () => {
+  const [menuState, setMenuState] = React.useState(false);
+  const [isScrolled, setIsScrolled] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  return (
+    <header>
+      <nav className={cn(
+        "fixed z-20 w-full transition-all duration-300",
+        isScrolled && "bg-background/75 border-b backdrop-blur-lg",
+      )}>
+        {/* Navigation content */}
+      </nav>
+    </header>
+  );
+};
+```
+
+Features:
+- Scroll-based background blur
+- Mobile menu toggle
+- Responsive layout
+- Analytics tracking
+
+## Adding New Components
+
+### Using shadcn/ui CLI
+
+Add official shadcn/ui components:
+
+```bash
+npx shadcn@latest add dialog
+npx shadcn@latest add tabs
+npx shadcn@latest add tooltip
+```
+
+### Creating Custom Components
+
+1. **Create a new file** in `src/components/`:
+
+```tsx
+// src/components/feature-card.tsx
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { HugeiconsIcon } from "@hugeicons/react";
+
+interface FeatureCardProps {
+  title: string;
+  description: string;
+  icon: React.ComponentType;
+}
+
+export function FeatureCard({ title, description, icon }: FeatureCardProps) {
+  return (
+    <Card>
+      <CardHeader>
+        <HugeiconsIcon icon={icon} className="size-8 mb-2" />
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-muted-foreground">{description}</p>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+2. **Use the component**:
+
+```tsx
+import { FeatureCard } from "@/components/feature-card";
+import { Rocket01Icon } from "@hugeicons/core-free-icons";
+
+<FeatureCard
+  title="Fast Performance"
+  description="Lightning-fast load times"
+  icon={Rocket01Icon}
+/>
+```
+
+## Icon Usage
+
+Shipr uses Hugeicons for all icons:
+
+```tsx
+import { HugeiconsIcon } from "@hugeicons/react";
+import { 
+  Menu01Icon, 
+  Cancel01Icon, 
+  Sun01Icon, 
+  Moon02Icon 
+} from "@hugeicons/core-free-icons";
+
+<HugeiconsIcon 
+  icon={Menu01Icon} 
+  strokeWidth={2} 
+  className="size-6"
+/>
+```
+
+## Component Best Practices
+
+1. **Use semantic HTML** - Leverage proper HTML elements
+2. **Compose components** - Build complex UIs from simple primitives
+3. **Extract reusable logic** - Create custom hooks for shared behavior
+4. **Type everything** - Use TypeScript interfaces for props
+5. **Keep components focused** - Single responsibility principle
+6. **Use data attributes** - For styling and testing (`data-slot`, `data-state`)
+7. **Prefer composition** - Use `render` prop for polymorphic components
